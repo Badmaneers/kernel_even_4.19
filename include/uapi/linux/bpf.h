@@ -255,7 +255,8 @@ union bpf_attr {
 		__aligned_u64	log_buf;	/* user supplied buffer */
 		__u32		kern_version;	/* checked when prog_type=kprobe */
 		__u32		prog_flags;
-		__u8		prog_name[BPF_OBJ_NAME_LEN];
+		char		prog_name[BPF_OBJ_NAME_LEN];
+		__u32		prog_target_ifindex;	/* ifindex of netdev to prep for */
 	};
 
 	struct { /* anonymous struct used by BPF_OBJ_* commands */
