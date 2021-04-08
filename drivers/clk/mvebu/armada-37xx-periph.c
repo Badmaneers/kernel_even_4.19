@@ -499,6 +499,9 @@ static void clk_pm_cpu_set_rate_wa(struct clk_pm_cpu *pm_cpu,
 {
 	unsigned int cur_level;
 
+	if (rate < 1000 * 1000 * 1000)
+		return;
+
 	regmap_read(base, ARMADA_37XX_NB_CPU_LOAD, &cur_level);
 	cur_level &= ARMADA_37XX_NB_CPU_LOAD_MASK;
 
