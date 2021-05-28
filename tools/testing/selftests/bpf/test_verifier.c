@@ -7937,7 +7937,7 @@ static struct bpf_test tests[] = {
 			BPF_JMP_IMM(BPF_JA, 0, 0, -7),
 		},
 		.fixup_map1 = { 4 },
-		.errstr = "R0 invalid mem access 'inv'",
+		.errstr = "unbounded min value",
 		.errstr_unpriv = "R1 has unknown scalar with mixed signed bounds",
 		.result = REJECT,
 	},
