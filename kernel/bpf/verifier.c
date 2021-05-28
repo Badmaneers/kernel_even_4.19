@@ -4304,28 +4304,14 @@ static int check_cond_jmp_op(struct bpf_verifier_env *env,
 		 tnum_is_const(src_reg->var_off))
 		pred = is_branch_taken(dst_reg, src_reg->var_off.value,
 				       opcode);
-
 	if (pred == 1) {
-		/* Only follow the goto, ignore fall-through. If needed, push
-		 * the fall-through branch for simulation under speculative
-		 * execution.
-		 */
-		if (!env->allow_ptr_leaks &&
-		    !sanitize_speculative_path(env, insn, *insn_idx + 1,
-					       *insn_idx))
-			return -EFAULT;
+		/* only follow the goto, ignore fall-through */
 		*insn_idx += insn->off;
 		return 0;
 	} else if (pred == 0) {
-		/* Only follow the fall-through branch, since that's where the
-		 * program will go. If needed, push the goto branch for
-		 * simulation under speculative execution.
+		/* only follow fall-through branch, since
+		 * that's where the program will go
 		 */
-		if (!env->allow_ptr_leaks &&
-		    !sanitize_speculative_path(env, insn,
-					       *insn_idx + insn->off + 1,
-					       *insn_idx))
-			return -EFAULT;
 		return 0;
 	}
 
