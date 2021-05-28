@@ -2725,9 +2725,17 @@ enum {
 };
 
 static int retrieve_ptr_limit(const struct bpf_reg_state *ptr_reg,
-			      u32 *alu_limit, bool mask_to_left)
+			      const struct bpf_reg_state *off_reg,
+			      u32 *ptr_limit, u8 opcode)
 {
-	u32 max = 0, ptr_limit = 0;
+	bool off_is_neg = off_reg->smin_value < 0;
+	bool mask_to_left = (opcode == BPF_ADD &&  off_is_neg) ||
+			    (opcode == BPF_SUB && !off_is_neg);
+	u32 off, max;
+
+	if (!tnum_is_const(off_reg->var_off) &&
+	    (off_reg->smin_value < 0) != (off_reg->smax_value < 0))
+		return -EACCES;
 
 	switch (ptr_reg->type) {
 	case PTR_TO_STACK:
@@ -2872,12 +2880,9 @@ static int sanitize_ptr_alu(struct bpf_verifier_env *env,
 		alu_state |= ptr_is_dst_reg ?
 			     BPF_ALU_SANITIZE_SRC : BPF_ALU_SANITIZE_DST;
 
-		/* Limit pruning on unknown scalars to enable deep search for
-		 * potential masking differences from other program paths.
-		 */
-		if (!off_is_imm)
-			env->explore_alu_limits = true;
-	}
+	err = retrieve_ptr_limit(ptr_reg, off_reg, &alu_limit, opcode);
+	if (err < 0)
+		return err;
 
 	err = update_alu_sanitation_state(aux, alu_state, alu_limit);
 	if (err < 0)
@@ -3019,7 +3024,6 @@ static int adjust_ptr_min_max_vals(struct bpf_verifier_env *env,
 	    smin_ptr = ptr_reg->smin_value, smax_ptr = ptr_reg->smax_value;
 	u64 umin_val = off_reg->umin_value, umax_val = off_reg->umax_value,
 	    umin_ptr = ptr_reg->umin_value, umax_ptr = ptr_reg->umax_value;
-	struct bpf_sanitize_info info = {};
 	u8 opcode = BPF_OP(insn->code);
 	u32 dst = insn->dst_reg;
 	int ret;
