@@ -2901,6 +2901,7 @@ static struct bpf_test tests[] = {
 	},
 	{
 		"unpriv: adding of fp, reg",
+		"unpriv: adding of fp, reg",
 		.insns = {
 			BPF_MOV64_IMM(BPF_REG_0, 0),
 			BPF_MOV64_IMM(BPF_REG_1, 0),
@@ -9958,6 +9959,7 @@ static struct bpf_test tests[] = {
 		.errstr_unpriv = "R1 has pointer with unsupported alu operation",
 		.errstr = "R0 tried to subtract pointer from scalar",
 		.result = REJECT,
+		.result = REJECT,
 	},
 	{
 		"check deducing bounds from const, 2",
@@ -9985,6 +9987,7 @@ static struct bpf_test tests[] = {
 		},
 		.errstr_unpriv = "R1 has pointer with unsupported alu operation",
 		.errstr = "R0 tried to subtract pointer from scalar",
+		.result = REJECT,
 		.result = REJECT,
 	},
 	{
@@ -10014,6 +10017,7 @@ static struct bpf_test tests[] = {
 		.errstr_unpriv = "R1 has pointer with unsupported alu operation",
 		.errstr = "R0 tried to subtract pointer from scalar",
 		.result = REJECT,
+		.result = REJECT,
 	},
 	{
 		"check deducing bounds from const, 6",
@@ -10026,6 +10030,7 @@ static struct bpf_test tests[] = {
 		},
 		.errstr_unpriv = "R1 has pointer with unsupported alu operation",
 		.errstr = "R0 tried to subtract pointer from scalar",
+		.result = REJECT,
 		.result = REJECT,
 	},
 	{
@@ -10069,6 +10074,7 @@ static struct bpf_test tests[] = {
 		.errstr_unpriv = "R1 has pointer with unsupported alu operation",
 		.errstr = "R0 tried to subtract pointer from scalar",
 		.result = REJECT,
+		.result = REJECT,
 	},
 	{
 		"check deducing bounds from const, 10",
@@ -10081,6 +10087,7 @@ static struct bpf_test tests[] = {
 			BPF_EXIT_INSN(),
 		},
 		.errstr = "math between ctx pointer and register with unbounded min value is not allowed",
+		.result = REJECT,
 		.result = REJECT,
 	},
 	{
