@@ -44,7 +44,6 @@
 #include <linux/of_gpio.h>
 #include <connectivity_build_in_adapter.h>
 #include "wmt_lib.h"
-#include "regmap_shared.h"
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0))
 #include <linux/regulator/consumer.h>

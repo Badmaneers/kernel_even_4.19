@@ -23,7 +23,7 @@
 #include <linux/mfd/mt6397/core.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#include "regmap_shared.h"
+#include <linux/regmap.h>
 #endif /* ALPS07853033 */
 
 static struct REGULATOR *preg_own;
@@ -68,7 +68,7 @@ struct REGULATOR_CTRL regulator_control[REGULATOR_TYPE_MAX_NUM] = {
 static struct REGULATOR reg_instance;
 
 #ifdef OPLUS_FEATURE_CAMERA_COMMON
-struct regmap *g_regmap;
+static struct regmap *g_regmap;
 #endif /* ALPS07853033 */
 
 static int regulator_oc_notify(
