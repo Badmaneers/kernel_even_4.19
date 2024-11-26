@@ -23,7 +23,7 @@
 #include <linux/mfd/mt6397/core.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
-#include <linux/regmap.h>
+#include "regmap_shared.h"
 #endif /* ALPS07853033 */
 
 static struct REGULATOR *preg_own;
