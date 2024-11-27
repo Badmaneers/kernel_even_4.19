@@ -53,13 +53,13 @@ endif
     export CONFIG_MTK_COMBO_WIFI_HIF=axi
     export MTK_COMBO_CHIP=SOC2_2X2
     export CONNAC_VER=1_0
-    export WLAN_CHIP_ID=6781
+    export WLAN_CHIP_ID=6768
     export MTK_ANDROID_WMT=y
     export MTK_ANDROID_EMI=y
     export WIFI_IP_SET=2
     export WIFI_ECO_VER=1
     export MTK_WLAN_SERVICE=yes
-    export CFG_FM_CHIP_ID=6781
+    export CFG_FM_CHIP_ID=6768
     export CFG_FM_CHIP=mt6631
 
     # Do build-in for Makefile checking
