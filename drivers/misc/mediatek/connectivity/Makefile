@@ -60,7 +60,7 @@ endif
     export WIFI_ECO_VER=1
     export MTK_WLAN_SERVICE=yes
     export CFG_FM_CHIP_ID=6768
-    export CFG_FM_CHIP=mt6631
+    export CFG_FM_CHIP=mt6635
 
     # Do build-in for Makefile checking
     # export CONFIG_WLAN_DRV_BUILD_IN=y
