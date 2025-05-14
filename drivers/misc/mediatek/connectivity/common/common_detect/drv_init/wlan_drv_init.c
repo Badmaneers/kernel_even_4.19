@@ -20,7 +20,7 @@
 #include "wmt_detect.h"
 #include "wlan_drv_init.h"
 
-int __attribute__((weak)) mtk_wcn_wlan_gen4_init()
+int __attribute__((weak)) mtk_wcn_wlan_gen4_init(void)
 {
 	WMT_DETECT_PR_DBG("no impl. mtk_wcn_wlan_gen4_init\n");
 	return 0;
