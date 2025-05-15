@@ -100,8 +100,7 @@ static void inotify_fdinfo(struct seq_file *m, struct fsnotify_mark *mark)
 
 	inode_mark = container_of(mark, struct inotify_inode_mark, fsn_mark);
 	inode = igrab(mark->connector->inode);
-	if (inode) {
-		u32 mask = mark->mask & IN_ALL_EVENTS;		
+	if (inode) {	
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 		if (likely(current->susfs_task_state & TASK_STRUCT_NON_ROOT_USER_APP_PROC) &&
 				unlikely(inode->i_state & INODE_STATE_SUS_KSTAT)) {
