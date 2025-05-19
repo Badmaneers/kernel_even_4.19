@@ -1085,11 +1085,8 @@ select_insn:
 		DST = div64_u64(DST, SRC);
 		CONT;
 	ALU_DIV_X:
-<<<<<<< HEAD
-=======
 		if (unlikely((u32)SRC == 0))
 			return 0;
->>>>>>> 03b8fd056c6b (bpf: Do not use ax register in interpreter on div/mod)
 		tmp = (u32) DST;
 		do_div(tmp, (u32) SRC);
 		DST = (u32) tmp;
