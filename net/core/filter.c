@@ -33,7 +33,6 @@
 #include <linux/if_packet.h>
 #include <linux/if_arp.h>
 #include <linux/gfp.h>
-#include <net/inet_common.h>
 #include <net/ip.h>
 #include <net/protocol.h>
 #include <net/netlink.h>
@@ -3187,52 +3186,6 @@ static const struct bpf_func_proto bpf_setsockopt_proto = {
 	.arg5_type	= ARG_CONST_SIZE,
 };
 
-const struct ipv6_bpf_stub *ipv6_bpf_stub __read_mostly;
-EXPORT_SYMBOL_GPL(ipv6_bpf_stub);
-
-BPF_CALL_3(bpf_bind, struct bpf_sock_addr_kern *, ctx, struct sockaddr *, addr,
-	   int, addr_len)
-{
-#ifdef CONFIG_INET
-	struct sock *sk = ctx->sk;
-	int err;
-
-	/* Binding to port can be expensive so it's prohibited in the helper.
-	 * Only binding to IP is supported.
-	 */
-	err = -EINVAL;
-	if (addr->sa_family == AF_INET) {
-		if (addr_len < sizeof(struct sockaddr_in))
-			return err;
-		if (((struct sockaddr_in *)addr)->sin_port != htons(0))
-			return err;
-		return __inet_bind(sk, addr, addr_len, true, false);
-#if IS_ENABLED(CONFIG_IPV6)
-	} else if (addr->sa_family == AF_INET6) {
-		if (addr_len < SIN6_LEN_RFC2133)
-			return err;
-		if (((struct sockaddr_in6 *)addr)->sin6_port != htons(0))
-			return err;
-		/* ipv6_bpf_stub cannot be NULL, since it's called from
-		 * bpf_cgroup_inet6_connect hook and ipv6 is already loaded
-		 */
-		return ipv6_bpf_stub->inet6_bind(sk, addr, addr_len, true, false);
-#endif /* CONFIG_IPV6 */
-	}
-#endif /* CONFIG_INET */
-
-	return -EAFNOSUPPORT;
-}
-
-static const struct bpf_func_proto bpf_bind_proto = {
-	.func		= bpf_bind,
-	.gpl_only	= false,
-	.ret_type	= RET_INTEGER,
-	.arg1_type	= ARG_PTR_TO_CTX,
-	.arg2_type	= ARG_PTR_TO_MEM,
-	.arg3_type	= ARG_CONST_SIZE,
-};
-
 static const struct bpf_func_proto *
 bpf_base_func_proto(enum bpf_func_id func_id)
 {
@@ -3270,28 +3223,6 @@ sock_filter_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
 	 */
 	case BPF_FUNC_get_current_uid_gid:
 		return &bpf_get_current_uid_gid_proto;
-	default:
-		return bpf_base_func_proto(func_id);
-	}
-}
-
-static const struct bpf_func_proto *
-sock_addr_func_proto(enum bpf_func_id func_id, const struct bpf_prog *prog)
-{
-	switch (func_id) {
-	/* inet and inet6 sockets are created in a process
-	 * context so there is always a valid uid/gid
-	 */
-	case BPF_FUNC_get_current_uid_gid:
-		return &bpf_get_current_uid_gid_proto;
-	case BPF_FUNC_bind:
-		switch (prog->expected_attach_type) {
-		case BPF_CGROUP_INET4_CONNECT:
-		case BPF_CGROUP_INET6_CONNECT:
-			return &bpf_bind_proto;
-		default:
-			return NULL;
-		}
 	default:
 		return bpf_base_func_proto(func_id);
 	}
@@ -3746,71 +3677,6 @@ void bpf_warn_invalid_xdp_action(u32 act)
 		     act);
 }
 EXPORT_SYMBOL_GPL(bpf_warn_invalid_xdp_action);
-
-static bool sock_addr_is_valid_access(int off, int size,
-				      enum bpf_access_type type,
-				      const struct bpf_prog *prog,
-				      struct bpf_insn_access_aux *info)
-{
-	const int size_default = sizeof(__u32);
-
-	if (off < 0 || off >= sizeof(struct bpf_sock_addr))
-		return false;
-	if (off % size != 0)
-		return false;
-
-	/* Disallow access to IPv6 fields from IPv4 contex and vise
-	 * versa.
-	 */
-	switch (off) {
-	case bpf_ctx_range(struct bpf_sock_addr, user_ip4):
-		switch (prog->expected_attach_type) {
-		case BPF_CGROUP_INET4_BIND:
-		case BPF_CGROUP_INET4_CONNECT:
-			break;
-		default:
-			return false;
-		}
-		break;
-	case bpf_ctx_range_till(struct bpf_sock_addr, user_ip6[0], user_ip6[3]):
-		switch (prog->expected_attach_type) {
-		case BPF_CGROUP_INET6_BIND:
-		case BPF_CGROUP_INET6_CONNECT:
-			break;
-		default:
-			return false;
-		}
-		break;
-	}
-
-	switch (off) {
-	case bpf_ctx_range(struct bpf_sock_addr, user_ip4):
-	case bpf_ctx_range_till(struct bpf_sock_addr, user_ip6[0], user_ip6[3]):
-		/* Only narrow read access allowed for now. */
-		if (type == BPF_READ) {
-			bpf_ctx_record_field_size(info, size_default);
-			if (!bpf_ctx_narrow_access_ok(off, size, size_default))
-				return false;
-		} else {
-			if (size != size_default)
-				return false;
-		}
-		break;
-	case bpf_ctx_range(struct bpf_sock_addr, user_port):
-		if (size != size_default)
-			return false;
-		break;
-	default:
-		if (type == BPF_READ) {
-			if (size != size_default)
-				return false;
-		} else {
-			return false;
-		}
-	}
-
-	return true;
-}
 
 static bool __is_valid_sock_ops_access(int off, int size)
 {

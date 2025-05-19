@@ -1165,20 +1165,10 @@ static int
 bpf_prog_load_check_attach_type(enum bpf_prog_type prog_type,
 				enum bpf_attach_type expected_attach_type)
 {
-	switch (prog_type) {
-	case BPF_PROG_TYPE_CGROUP_SOCK_ADDR:
-		switch (expected_attach_type) {
-		case BPF_CGROUP_INET4_BIND:
-		case BPF_CGROUP_INET6_BIND:
-		case BPF_CGROUP_INET4_CONNECT:
-		case BPF_CGROUP_INET6_CONNECT:
-			return 0;
-		default:
-			return -EINVAL;
-		}
-	default:
-		return 0;
-	}
+	/* There are currently no prog types that require specifying
+	 * attach_type at load time.
+	 */
+	return 0;
 }
 
 static int bpf_prog_attach_check_attach_type(const struct bpf_prog *prog,
@@ -1407,12 +1397,6 @@ static int bpf_prog_attach(const union bpf_attr *attr)
 	case BPF_CGROUP_INET_SOCK_CREATE:
 		ptype = BPF_PROG_TYPE_CGROUP_SOCK;
 		break;
-	case BPF_CGROUP_INET4_BIND:
-	case BPF_CGROUP_INET6_BIND:
-	case BPF_CGROUP_INET4_CONNECT:
-	case BPF_CGROUP_INET6_CONNECT:
-		ptype = BPF_PROG_TYPE_CGROUP_SOCK_ADDR;
-		break;
 	case BPF_CGROUP_SOCK_OPS:
 		ptype = BPF_PROG_TYPE_SOCK_OPS;
 		break;
@@ -1470,12 +1454,6 @@ static int bpf_prog_detach(const union bpf_attr *attr)
 	case BPF_CGROUP_INET_SOCK_CREATE:
 		ptype = BPF_PROG_TYPE_CGROUP_SOCK;
 		break;
-	case BPF_CGROUP_INET4_BIND:
-	case BPF_CGROUP_INET6_BIND:
-	case BPF_CGROUP_INET4_CONNECT:
-	case BPF_CGROUP_INET6_CONNECT:
-		ptype = BPF_PROG_TYPE_CGROUP_SOCK_ADDR;
-		break;
 	case BPF_CGROUP_SOCK_OPS:
 		ptype = BPF_PROG_TYPE_SOCK_OPS;
 		break;
@@ -1520,10 +1498,6 @@ static int bpf_prog_query(const union bpf_attr *attr,
 	case BPF_CGROUP_INET_INGRESS:
 	case BPF_CGROUP_INET_EGRESS:
 	case BPF_CGROUP_INET_SOCK_CREATE:
-	case BPF_CGROUP_INET4_BIND:
-	case BPF_CGROUP_INET6_BIND:
-	case BPF_CGROUP_INET4_CONNECT:
-	case BPF_CGROUP_INET6_CONNECT:
 	case BPF_CGROUP_SOCK_OPS:
 		break;
 	default:
