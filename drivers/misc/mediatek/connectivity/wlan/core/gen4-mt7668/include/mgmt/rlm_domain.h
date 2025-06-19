@@ -639,7 +639,6 @@ typedef struct mtk_regd_control_t {
 	u32 alpha2;
 	u32 tmp_alpha2; /*store country code set by iwpriv "country XX"*/
 	u32 flag; /*enum regd_control_flag*/
-	struct wiphy *pRefWiphy; /*log the referenced wiphy*/
 	P_GLUE_INFO_T pGlueInfo; /*wlan GlueInfo*/
 	u8 n_channel_active_2g;
 	u8 n_channel_active_5g;
@@ -734,8 +733,6 @@ struct channel *rlmDomainGetActiveChannels(void);
 void rlmExtractChannelInfo(u32 max_ch_count, struct acctive_channel_list *prBuff);
 void regd_set_using_local_regdomain_db(void);
 void rlmDomainSetDefaultCountryCode(void);
-struct wiphy *rlmDomainGetRefWiphy(void);
-void rlmDomainSetRefWiphy(struct wiphy *pWiphy);
 enum regd_state rlmDomainGetCtrlState(void);
 bool rlmDomainIsSameCountryCode(char *alpha2, u8 size_of_alpha2);
 const struct ieee80211_regdomain *rlmDomainSearchRegdomainFromLocalDataBase(char *alpha2);

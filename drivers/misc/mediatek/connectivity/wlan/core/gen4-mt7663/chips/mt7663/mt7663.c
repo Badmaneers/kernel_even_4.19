@@ -76,6 +76,11 @@
  *                              C O N S T A N T S
  *******************************************************************************
  */
+#define SER_STATUS_CR             (0x820600d0)
+#define PLE_STATUS_CR             (0x820600d4)
+#define PSE_STATUS_CR             (0x820600d8)
+#define LMAC_STATUS_CR            (0x820681e4)
+#define PP_DMASHDL_STATUS_CR      (0x820682ec)
 
 /*******************************************************************************
  *                                 M A C R O S
@@ -197,6 +202,38 @@ mt7663ConstructFirmwarePrio(struct GLUE_INFO *prGlueInfo,
 	}
 }
 
+void mt7663DumpSerDummyCR(
+	IN struct ADAPTER *prAdapter)
+{
+	uint32_t u4MacVal;
+
+	DBGLOG(HAL, INFO, "%s\n", __func__);
+
+	DBGLOG(HAL, INFO, "=====Dump Start====\n");
+
+	HAL_MCR_RD(prAdapter, SER_STATUS_CR, &u4MacVal);
+	DBGLOG(HAL, INFO, "SER STATUS[0x%08x]: 0x%08x\n",
+	       SER_STATUS_CR, u4MacVal);
+
+	HAL_MCR_RD(prAdapter, PLE_STATUS_CR, &u4MacVal);
+	DBGLOG(HAL, INFO, "PLE STATUS[0x%08x]: 0x%08x\n",
+	       PLE_STATUS_CR, u4MacVal);
+
+	HAL_MCR_RD(prAdapter, PSE_STATUS_CR, &u4MacVal);
+	DBGLOG(HAL, INFO, "PSE STATUS[0x%08x]: 0x%08x\n",
+	       PSE_STATUS_CR, u4MacVal);
+
+	HAL_MCR_RD(prAdapter, LMAC_STATUS_CR, &u4MacVal);
+	DBGLOG(HAL, INFO, "LMAC STATUS[0x%08x]: 0x%08x\n",
+	       LMAC_STATUS_CR, u4MacVal);
+
+	HAL_MCR_RD(prAdapter, PP_DMASHDL_STATUS_CR, &u4MacVal);
+	DBGLOG(HAL, INFO, "PP DMASHDL STATUS[0x%08x]: 0x%08x\n",
+	       PP_DMASHDL_STATUS_CR, u4MacVal);
+
+	DBGLOG(HAL, INFO, "=====Dump End====\n");
+
+}
 
 struct BUS_INFO mt7663_bus_info = {
 #if defined(_HIF_PCIE)
@@ -318,6 +355,7 @@ struct mt66xx_chip_info mt66xx_chip_info_mt7663 = {
 	.workAround = 0,
 	.prTxPwrLimitFile = "TxPwrLimit_MT76x3.dat",
 	.ucTxPwrLimitBatchSize = 16,
+	.asicDumpSerDummyCR = mt7663DumpSerDummyCR,
 };
 
 struct mt66xx_hif_driver_data mt66xx_driver_data_mt7663 = {

@@ -432,6 +432,10 @@ void halRxSDIOAggReceiveRFBs(IN struct ADAPTER *prAdapter);
 void halPutMailbox(IN struct ADAPTER *prAdapter, IN uint32_t u4MailboxNum, IN uint32_t u4Data);
 void halGetMailbox(IN struct ADAPTER *prAdapter, IN uint32_t u4MailboxNum, OUT uint32_t *pu4Data);
 void halDeAggRxPkt(struct ADAPTER *prAdapter, struct SDIO_RX_COALESCING_BUF *prRxBuf);
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+void halDeAggRxPktProc(struct ADAPTER *prAdapter,
+			struct SDIO_RX_COALESCING_BUF *prRxBuf);
+#endif
 void halPrintMailbox(IN struct ADAPTER *prAdapter);
 void halPollDbgCr(IN struct ADAPTER *prAdapter, IN uint32_t u4LoopCount);
 void halTxGetFreeResource_v1(IN struct ADAPTER *prAdapter, IN uint16_t *au2TxDoneCnt, IN uint16_t *au2TxRlsCnt);

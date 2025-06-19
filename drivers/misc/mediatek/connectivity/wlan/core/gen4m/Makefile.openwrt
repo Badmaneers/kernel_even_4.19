@@ -66,7 +66,7 @@ obj-$(CONFIG_GEN4M_SUPPORT) += $(MODULE_NAME).o
 endif
 #==============================================================================
 
-WLAN_CHIP_LIST:=-UMT6620 -UMT6628 -UMT5931 -UMT6630 -UMT6632 -UMT7663 -UCONNAC -UCONNAC2X2 -UUT_TEST_MODE -UMT7915 -USOC3_0 -UMT7961
+WLAN_CHIP_LIST:=-UMT6620 -UMT6628 -UMT5931 -UMT6630 -UMT6632 -UMT7663 -UCONNAC -USOC2_1X1 -USOC2_2X2 -UUT_TEST_MODE -UMT7915 -USOC3_0 -UMT7961
 # '-D' and '-U' options are processed in the order they are given on the command line.
 # All '-imacros file' and '-include file' options are processed after all '-D' and '-U' options.
 ccflags-y += $(WLAN_CHIP_LIST)
@@ -87,7 +87,6 @@ ccflags-y += -DWLAN_INCLUDE_PROC
 ccflags-y += -DCFG_SUPPORT_AGPS_ASSIST=0
 ccflags-y += -DCFG_SUPPORT_TSF_USING_BOOTTIME=1
 ccflags-y += -DARP_MONITER_ENABLE=1
-ccflags-y += -Werror
 #ccflags-y:=$(filter-out -U$(WLAN_CHIP_ID),$(ccflags-y))
 #ccflags-y += -DLINUX -D$(WLAN_CHIP_ID)
 #workaround: also needed for none LINUX system
@@ -114,9 +113,14 @@ ccflags-y:=$(filter-out -UCONNAC,$(ccflags-y))
 ccflags-y += -DCONNAC
 endif
 
-ifneq ($(filter CONNAC2X2,$(MTK_COMBO_CHIP)),)
-ccflags-y:=$(filter-out -UCONNAC2X2,$(ccflags-y))
-ccflags-y += -DCONNAC2X2
+ifneq ($(filter SOC2_1X1,$(MTK_COMBO_CHIP)),)
+ccflags-y:=$(filter-out -USOC2_1X1,$(ccflags-y))
+ccflags-y += -DSOC2_1X1
+endif
+
+ifneq ($(filter SOC2_2X2,$(MTK_COMBO_CHIP)),)
+ccflags-y:=$(filter-out -USOC2_2X2,$(ccflags-y))
+ccflags-y += -DSOC2_2X2
 endif
 
 ifneq ($(findstring MT7915,$(MTK_COMBO_CHIP)),)
@@ -346,10 +350,8 @@ obj-$(CONFIG_MTK_COMBO_WIFI) += $(MODULE_NAME).o
 endif
 
 ifeq ($(CONFIG_WLAN_DRV_BUILD_IN),y)
-$(warning $(MODULE_NAME) build-in boot.img)
 obj-y += $(MODULE_NAME).o
 else
-$(warning $(MODULE_NAME) is kernel module)
 obj-m += $(MODULE_NAME).o
 endif
 
@@ -490,8 +492,11 @@ endif
 ifneq ($(filter CONNAC,$(MTK_COMBO_CHIP)),)
 CHIPS_OBJS += $(CHIPS)connac/connac.o
 endif
-ifneq ($(filter CONNAC2X2,$(MTK_COMBO_CHIP)),)
-CHIPS_OBJS += $(CHIPS)connac2x2/connac2x2.o
+ifneq ($(filter SOC2_1X1,$(MTK_COMBO_CHIP)),)
+CHIPS_OBJS += $(CHIPS)soc2_1x1/soc2_1x1.o
+endif
+ifneq ($(filter SOC2_2X2,$(MTK_COMBO_CHIP)),)
+CHIPS_OBJS += $(CHIPS)soc2_2x2/soc2_2x2.o
 endif
 ifneq ($(findstring MT7915,$(MTK_COMBO_CHIP)),)
 CHIPS_OBJS += $(CHIPS)mt7915/mt7915.o

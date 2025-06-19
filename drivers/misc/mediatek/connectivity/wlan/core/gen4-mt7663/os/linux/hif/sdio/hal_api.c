@@ -2522,12 +2522,20 @@ void halDeAggRxPkt(struct ADAPTER *prAdapter, struct SDIO_RX_COALESCING_BUF *prR
 		return;
 	}
 
-#if CFG_SDIO_RX_AGG_WORKQUE
+#if CFG_SDIO_RX_AGG_WORKQUE && !CFG_SDIO_RX_DE_AGG_IN_THREAD
 	mutex_lock(&prHifInfo->rRxDeAggQueMutex);
 	QUEUE_INSERT_TAIL(&prHifInfo->rRxDeAggQueue, (struct QUE_ENTRY *)prRxBuf);
 	mutex_unlock(&prHifInfo->rRxDeAggQueMutex);
 
 	schedule_delayed_work(&prAdapter->prGlueInfo->rRxPktDeAggWork, 0);
+#elif CFG_SDIO_RX_DE_AGG_IN_THREAD
+	mutex_lock(&prHifInfo->rRxDeAggQueMutex);
+	QUEUE_INSERT_TAIL(&prHifInfo->rRxDeAggQueue,
+		(struct QUE_ENTRY *)prRxBuf);
+	mutex_unlock(&prHifInfo->rRxDeAggQueMutex);
+	set_bit(GLUE_FLAG_RX_DE_AGG_IN_THREAD_BIT,
+		&(prAdapter->prGlueInfo->ulFlag));
+	wake_up_interruptible(&(prAdapter->prGlueInfo->waitq_rxDeAgg));
 #else
 	halDeAggRxPktProc(prAdapter, prRxBuf);
 #endif
@@ -2595,8 +2603,9 @@ uint32_t halHifPowerOffWifi(IN struct ADAPTER *prAdapter)
 
 void halPollDbgCr(IN struct ADAPTER *prAdapter, IN uint32_t u4LoopCount)
 {
-	uint32_t au4Value[] = {MCR_WCIR, MCR_WHLPCR, MCR_D2HRM2R};
-	uint32_t au4Value1[] = {MCR_WHIER, MCR_D2HRM0R, MCR_D2HRM1R};
+	uint32_t au4Value[] = {MCR_WCIR, MCR_WHLPCR};
+	uint32_t au4Value1[] = {MCR_WHIER, MCR_D2HRM0R, MCR_D2HRM1R,
+		MCR_D2HRM2R};
 	uint32_t u4Loop = 0;
 	uint32_t u4Data = 0;
 	uint8_t i = 0, fgResult;
@@ -2607,8 +2616,8 @@ void halPollDbgCr(IN struct ADAPTER *prAdapter, IN uint32_t u4LoopCount)
 	for (; i < sizeof(au4Value)/sizeof(uint32_t); i++)
 		HAL_MCR_RD(prAdapter, au4Value[i], &au4Value[i]);
 
-	DBGLOG(REQ, WARN, "MCR_WCIR:0x%x, MCR_WHLPCR:0x%x, MCR_D2HRM2R:0x%x\n",
-		au4Value[0], au4Value[1], au4Value[2]);
+	DBGLOG(REQ, WARN, "MCR_WCIR:0x%x, MCR_WHLPCR:0x%x\n",
+		au4Value[0], au4Value[1]);
 
 	/* Need driver own */
 	HAL_LP_OWN_RD(prAdapter, &fgResult);
@@ -2625,8 +2634,8 @@ void halPollDbgCr(IN struct ADAPTER *prAdapter, IN uint32_t u4LoopCount)
 
 		DBGLOG(REQ, WARN, "MCR_WHIER:0x%x, MCR_D2HRM0R:0x%x",
 			au4Value1[0], au4Value1[1]);
-		DBGLOG(REQ, WARN, "MCR_D2HRM1R:0x%x\n",
-			au4Value1[2]);
+		DBGLOG(REQ, WARN, "MCR_D2HRM1R:0x%x, MCR_D2HRM2R:0x%x\n",
+			au4Value1[2], au4Value1[3]);
 	}
 
 #if MTK_WCN_HIF_SDIO

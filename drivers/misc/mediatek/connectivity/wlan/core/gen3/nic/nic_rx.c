@@ -145,43 +145,6 @@ static PROCESS_RX_MGT_FUNCTION apfnProcessRxMgtFrame[MAX_NUM_OF_FC_SUBTYPES] = {
 };
 #endif
 
-static const struct ACTION_FRAME_SIZE_MAP arActionFrameReservedLen[] = {
-	{(UINT_16)(CATEGORY_QOS_ACTION | ACTION_QOS_MAP_CONFIGURE << 8),
-	 sizeof(struct _ACTION_QOS_MAP_CONFIGURE_FRAME)},
-	{(UINT_16)(CATEGORY_PUBLIC_ACTION | ACTION_PUBLIC_20_40_COEXIST << 8),
-	 OFFSET_OF(ACTION_20_40_COEXIST_FRAME, rChnlReport)},
-	{(UINT_16)
-	 (CATEGORY_PUBLIC_ACTION | ACTION_PUBLIC_VENDOR_SPECIFIC << 8),
-	 sizeof(WLAN_PUBLIC_VENDOR_ACTION_FRAME)},
-	{(UINT_16)(CATEGORY_HT_ACTION | ACTION_HT_NOTIFY_CHANNEL_WIDTH << 8),
-	 sizeof(ACTION_NOTIFY_CHNL_WIDTH_FRAME)},
-	{(UINT_16)(CATEGORY_SA_QUERY_ACTION | ACTION_SA_QUERY_REQUEST << 8),
-	 sizeof(ACTION_SA_QUERY_FRAME)},
-	{(UINT_16)
-	 (CATEGORY_WNM_ACTION | ACTION_WNM_TIMING_MEASUREMENT_REQUEST << 8),
-	 sizeof(ACTION_WNM_TIMING_MEAS_REQ_FRAME)},
-	{(UINT_16)(CATEGORY_SPEC_MGT | ACTION_MEASUREMENT_REQ << 8),
-	 sizeof(ACTION_SM_REQ_FRAME)},
-	{(UINT_16)(CATEGORY_SPEC_MGT | ACTION_MEASUREMENT_REPORT << 8),
-	 sizeof(ACTION_SM_REQ_FRAME)},
-	{(UINT_16)(CATEGORY_SPEC_MGT | ACTION_TPC_REQ << 8),
-	 sizeof(ACTION_SM_REQ_FRAME)},
-	{(UINT_16)(CATEGORY_SPEC_MGT | ACTION_TPC_REPORT << 8),
-	 sizeof(ACTION_SM_REQ_FRAME)},
-	{(UINT_16)(CATEGORY_SPEC_MGT | ACTION_CHNL_SWITCH << 8),
-	 sizeof(ACTION_SM_REQ_FRAME)},
-	{(UINT_16)
-	 (CATEGORY_VHT_ACTION | ACTION_OPERATING_MODE_NOTIFICATION << 8),
-	 sizeof(ACTION_OP_MODE_NOTIFICATION_FRAME)},
-	{(UINT_16)(CATEGORY_RM_ACTION | RM_ACTION_RM_REQUEST << 8),
-	 sizeof(ACTION_RM_REQ_FRAME)},
-	{(UINT_16)(CATEGORY_RM_ACTION | RM_ACTION_REIGHBOR_RESPONSE << 8),
-	 sizeof(struct ACTION_NEIGHBOR_REPORT_FRAME)},
-	{(UINT_16)(CATEGORY_WME_MGT_NOTIFICATION | ACTION_ADDTS_RSP << 8),
-	 sizeof(struct WMM_ACTION_TSPEC_FRAME)},
-	{(UINT_16)(CATEGORY_WME_MGT_NOTIFICATION | ACTION_DELTS << 8),
-	 sizeof(struct WMM_ACTION_TSPEC_FRAME)},
-};
 /*******************************************************************************
 *                                 M A C R O S
 ********************************************************************************
@@ -977,6 +940,16 @@ VOID nicRxProcessForwardPkt(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 
 		/* send into TX queue */
 		KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_QM_TX_QUEUE);
+		if (prMsduInfo->ucBssIndex > 4) {
+			DBGLOG(QM, INFO,
+				"Invalid bssidx:%u\n", prMsduInfo->ucBssIndex);
+			if (prMsduInfo->pfTxDoneHandler != NULL)
+				prMsduInfo->pfTxDoneHandler(prAdapter,
+				prMsduInfo,
+				TX_RESULT_DROPPED_IN_DRIVER);
+			nicTxReturnMsduInfo(prAdapter, prMsduInfo);
+			return;
+		}
 		prRetMsduInfoList = qmEnqueueTxPackets(prAdapter, prMsduInfo);
 		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_QM_TX_QUEUE);
 
@@ -1408,6 +1381,36 @@ VOID nicRxProcessDataPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb)
 		} else if (HAL_RX_STATUS_IS_LLC_MIS(prRxStatus)) {
 			DBGLOG(RSN, ERROR, "LLC_MIS_ERR\n");
 			fgDrop = TRUE;	/* Drop after send de-auth  */
+		}
+	}
+
+	/* Drop plain text during security connection */
+	if (!fgDrop && HAL_RX_STATUS_IS_CIPHER_MISMATCH(prRxStatus)
+		&& (prSwRfb->fgDataFrame == TRUE)) {
+		PUINT_8 pucData = NULL;
+		UINT_16 u2EtherType = 0;
+
+		DBGLOG(RSN, INFO,
+			"HAL_RX_STATUS_IS_CIPHER_MISMATCH\n");
+
+		nicRxFillRFB(prAdapter, prSwRfb);
+		pucData = (PUINT_8)prSwRfb->pvHeader;
+		if ((prSwRfb->u2PacketLen > ETHER_HEADER_LEN) && pucData) {
+			u2EtherType = (pucData[ETH_TYPE_LEN_OFFSET] << 8)
+					| (pucData[ETH_TYPE_LEN_OFFSET + 1]);
+			if ((u2EtherType == ETH_P_1X)
+#if CFG_SUPPORT_WAPI
+				|| (u2EtherType == ETH_WPI_1X)
+#endif
+			) {
+				fgDrop = FALSE;
+				DBGLOG(RSN, INFO,
+					"Don't drop eapol or wpi packet\n");
+			} else {
+				fgDrop = TRUE;
+				DBGLOG(RSN, INFO,
+					"Drop plain text during security connection\n");
+			}
 		}
 	}
 
@@ -3814,41 +3817,6 @@ WLAN_STATUS nicRxFlush(IN P_ADAPTER_T prAdapter)
 	return WLAN_STATUS_SUCCESS;
 }
 
-UINT_8 nicIsActionFrameValid(IN P_SW_RFB_T prSwRfb)
-{
-	P_WLAN_ACTION_FRAME prActFrame;
-	UINT_16 u2ActionIndex = 0, u2ExpectedLen = 0;
-	UINT_32 u4Idx, u4Size;
-
-	if (prSwRfb->u2PacketLen < sizeof(WLAN_ACTION_FRAME) - 1)
-		return FALSE;
-	prActFrame = (P_WLAN_ACTION_FRAME) prSwRfb->pvHeader;
-
-	DBGLOG(RSN, TRACE, "Action frame category=%d action=%d\n",
-	       prActFrame->ucCategory, prActFrame->ucAction);
-
-	u2ActionIndex = prActFrame->ucCategory | prActFrame->ucAction << 8;
-	u4Size = sizeof(arActionFrameReservedLen) /
-		 sizeof(struct ACTION_FRAME_SIZE_MAP);
-	for (u4Idx = 0; u4Idx < u4Size; u4Idx++) {
-		if (u2ActionIndex == arActionFrameReservedLen[u4Idx].u2Index) {
-			u2ExpectedLen = (UINT_16)
-				arActionFrameReservedLen[u4Idx].len;
-			DBGLOG(RSN, LOUD,
-				"Found expected len of incoming action frame:%d\n",
-				u2ExpectedLen);
-			break;
-		}
-	}
-	if (u2ExpectedLen != 0 && prSwRfb->u2PacketLen < u2ExpectedLen) {
-		DBGLOG(RSN, INFO,
-			"Received an abnormal action frame: packet len/expected len:%d/%d\n",
-			prSwRfb->u2PacketLen, u2ExpectedLen);
-		return FALSE;
-	}
-	return TRUE;
-}
-
 /*----------------------------------------------------------------------------*/
 /*!
 * @brief
@@ -3871,7 +3839,7 @@ WLAN_STATUS nicRxProcessActionFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSw
 
 	DBGLOG(RSN, TRACE, "[Rx] nicRxProcessActionFrame\n");
 
-	if (!nicIsActionFrameValid(prSwRfb))
+	if (prSwRfb->u2PacketLen < sizeof(WLAN_ACTION_FRAME) - 1)
 		return WLAN_STATUS_INVALID_PACKET;
 	prActFrame = (P_WLAN_ACTION_FRAME) prSwRfb->pvHeader;
 
@@ -3950,26 +3918,17 @@ WLAN_STATUS nicRxProcessActionFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSw
 
 	case CATEGORY_PUBLIC_ACTION:
 	{
-		UINT_8 ucProcessed = 0;
 
-		if (IS_BMCAST_MAC_ADDR(prActFrame->aucDestAddr) ||
-		    EQUAL_MAC_ADDR(prActFrame->aucDestAddr, prAdapter->rWifiVar.aucMacAddress)) {
-			aisFuncValidateRxActionFrame(prAdapter, prSwRfb);
-			ucProcessed = 1;
-		}
+		aisFuncValidateRxActionFrame(prAdapter, prSwRfb);
 #if CFG_ENABLE_WIFI_DIRECT
-		if (prAdapter->fgIsP2PRegistered &&
-		    (IS_BMCAST_MAC_ADDR(prActFrame->aucDestAddr) ||
-		     EQUAL_MAC_ADDR(prActFrame->aucDestAddr, prAdapter->rWifiVar.aucDeviceAddress))) {
+		if (prAdapter->fgIsP2PRegistered) {
 			rlmProcessPublicAction(prAdapter, prSwRfb);
 
 			p2pFuncValidateRxActionFrame(prAdapter, prSwRfb);
-			ucProcessed |= 2;
 		}
 #endif
-		if (!ucProcessed)
-			DBGLOG(RX, WARN, "Not processed public action frame, DA:%pM, Our: %pM\n",
-			       prActFrame->aucDestAddr, prAdapter->rWifiVar.aucMacAddress);
+		DBGLOG(RX, INFO, "Processed public action frame, DA:%pM, Our: %pM\n",
+			prActFrame->aucDestAddr, prAdapter->rWifiVar.aucMacAddress);
 		break;
 	}
 	case CATEGORY_HT_ACTION:

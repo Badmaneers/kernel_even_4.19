@@ -1323,8 +1323,11 @@ WLAN_STATUS nicActivateNetwork(IN P_ADAPTER_T prAdapter, IN ENUM_NETWORK_TYPE_IN
 {
 	CMD_BSS_ACTIVATE_CTRL rCmdActivateCtrl;
 	P_BSS_INFO_T prBssInfo;
+	P_SCAN_INFO_T prScanInfo;
 
 	ASSERT(prAdapter);
+	prScanInfo = &(prAdapter->rWifiVar.rScanInfo);
+	ASSERT(prScanInfo);
 
 	if (eNetworkTypeIdx >= NETWORK_TYPE_INDEX_NUM) {
 		DBGLOG(NIC, WARN, "eNetworkTypeIdx: %d\n", eNetworkTypeIdx);
@@ -1335,6 +1338,10 @@ WLAN_STATUS nicActivateNetwork(IN P_ADAPTER_T prAdapter, IN ENUM_NETWORK_TYPE_IN
 	rCmdActivateCtrl.ucActive = 1;
 	rCmdActivateCtrl.ucVersion = 1;
 
+	if ((prScanInfo->eCurrendSchedScanReq == SCHED_SCAN_POSTPONE_START)
+		&& (prScanInfo->eCurrentPSCNState == PSCN_SCANNING)) {
+		rCmdActivateCtrl.ucVersion = 0;
+	}
 	prBssInfo = &prAdapter->rWifiVar.arBssInfo[eNetworkTypeIdx];
 	COPY_MAC_ADDR(rCmdActivateCtrl.aucBssMacAddr,
 		      prBssInfo->aucOwnMacAddr);
@@ -1686,8 +1693,9 @@ nicConfigPowerSaveProfile(IN P_ADAPTER_T prAdapter,
 
 	ASSERT(prAdapter);
 
-	if (eNetTypeIndex >= NETWORK_TYPE_INDEX_NUM ||
-			eNetTypeIndex < NETWORK_TYPE_AIS_INDEX) {
+	if (eNetTypeIndex != NETWORK_TYPE_AIS_INDEX &&
+		eNetTypeIndex != NETWORK_TYPE_P2P_INDEX &&
+		eNetTypeIndex != NETWORK_TYPE_BOW_INDEX) {
 		ASSERT(0);
 		return WLAN_STATUS_NOT_SUPPORTED;
 	}
@@ -2553,7 +2561,7 @@ WLAN_STATUS nicDisableClockGating(IN P_ADAPTER_T prAdapter)
 * @return (none)
 */
 /*----------------------------------------------------------------------------*/
-UINT_32
+VOID
 nicAddScanResult(IN P_ADAPTER_T prAdapter,
 		 IN PARAM_MAC_ADDRESS rMacAddr,
 		 IN P_PARAM_SSID_T prSsid,
@@ -2743,9 +2751,7 @@ nicAddScanResult(IN P_ADAPTER_T prAdapter,
 				prAdapter->rWlanInfo.apucScanResultIEs[i] = NULL;
 			}
 		}
-		return i;
 	}
-	return i - 1;
 }
 
 /*----------------------------------------------------------------------------*/

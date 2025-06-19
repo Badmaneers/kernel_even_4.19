@@ -691,6 +691,17 @@ void rlmGenerateWAC_IE(
 	IN struct MSDU_INFO *prMsduInfo);
 #endif
 
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+void rlmGenerateApRRMEnabledCapIE(IN struct ADAPTER *prAdapter,
+				IN struct MSDU_INFO *prMsduInfo);
+
+void rlmTxMeasurementRequest(struct ADAPTER *prAdapter,
+				struct STA_RECORD *prStaRec,
+				struct SUB_ELEMENT_LIST *prSubIEs);
+
+void rlmProcessRadioMeasurementResponse(struct ADAPTER *prAdapter,
+				struct SW_RFB *prSwRfb);
+#endif /* CFG_AP_80211K_SUPPORT */
 
 /*******************************************************************************
  *                              F U N C T I O N S

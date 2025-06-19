@@ -560,6 +560,12 @@ VOID qmDeactivateStaRec(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec)
 
 	if (!prStaRec)
 		return;
+
+#if CFG_SUPPORT_FRAG_ATTACK_DETECTION
+	/* clear fragment cache when reconnect, reassoc, disconnect */
+	nicRxClearFrag(prAdapter, prStaRec);
+#endif
+
 	/* 4 <1> Flush TX queues */
 	if (HAL_IS_TX_DIRECT(prAdapter)) {
 		nicTxDirectClearStaPsQ(prAdapter, prStaRec->ucIndex);
@@ -582,6 +588,9 @@ VOID qmDeactivateStaRec(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec)
 	prStaRec->fgIsValid = FALSE;
 	prStaRec->fgIsInPS = FALSE;
 	prStaRec->fgIsTxKeyReady = FALSE;
+	prStaRec->fgIsTxPairwiseKeyReady = FALSE;
+	prStaRec->fgIsTxGroupKeyReady = FALSE;
+	prStaRec->ucGroupKeyCount = 0;
 
 	/* Reset buffer count  */
 	prStaRec->ucFreeQuota = 0;
@@ -797,14 +806,12 @@ P_SW_RFB_T qmFlushRxQueues(IN P_ADAPTER_T prAdapter)
 P_SW_RFB_T qmFlushStaRxQueue(IN P_ADAPTER_T prAdapter, IN UINT_32 u4StaRecIdx, IN UINT_32 u4Tid)
 {
 	/* UINT_32 i; */
-	P_SW_RFB_T prSwRfbListHead;
-	P_SW_RFB_T prSwRfbListTail;
-	P_RX_BA_ENTRY_T prReorderQueParm;
-	P_STA_RECORD_T prStaRec;
+	P_SW_RFB_T prSwRfbListHead = NULL;
+	P_SW_RFB_T prSwRfbListTail = NULL;
+	P_RX_BA_ENTRY_T prReorderQueParm = NULL;
+	P_STA_RECORD_T prStaRec = NULL;
 
 	DBGLOG(QM, TRACE, "QM: Enter qmFlushStaRxQueues(%u)\n", u4StaRecIdx);
-
-	prSwRfbListHead = prSwRfbListTail = NULL;
 
 	prStaRec = &prAdapter->arStaRec[u4StaRecIdx];
 	ASSERT(prStaRec);
@@ -816,7 +823,9 @@ P_SW_RFB_T qmFlushStaRxQueue(IN P_ADAPTER_T prAdapter, IN UINT_32 u4StaRecIdx, I
 #endif
 
 	/* Obtain the RX BA Entry pointer */
-	prReorderQueParm = ((prStaRec->aprRxReorderParamRefTbl)[u4Tid]);
+	if (u4Tid < CFG_RX_MAX_BA_TID_NUM) {
+		prReorderQueParm = ((prStaRec->aprRxReorderParamRefTbl)[u4Tid]);
+	}
 
 	/* Note: For each queued packet, prCurrSwRfb->eDst equals RX_PKT_DESTINATION_HOST */
 	if (prReorderQueParm) {
@@ -960,30 +969,33 @@ VOID qmSetStaRecTxAllowed(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec, 
 	UINT_8 ucIdx;
 	P_QUE_T prSrcQ, prDstQ;
 
-	/* Update Tx queue */
-	for (ucIdx = 0; ucIdx < NUM_OF_PER_STA_TX_QUEUES; ucIdx++) {
-		if (fgIsTxAllowed) {
-			prSrcQ = &prStaRec->arPendingTxQueue[ucIdx];
-			prDstQ = &prStaRec->arTxQueue[ucIdx];
-		} else {
-			prSrcQ = &prStaRec->arTxQueue[ucIdx];
-			prDstQ = &prStaRec->arPendingTxQueue[ucIdx];
+	DBGLOG(QM, INFO, "Set Sta[%u] TxAllowed from [%u] to [%u] %s TxQ\n",
+		prStaRec->ucIndex,
+		prStaRec->fgIsTxAllowed,
+		fgIsTxAllowed,
+		fgIsTxAllowed ? "normal" : "pending");
+
+	/* Update Tx queue when allowed state change*/
+	if (prStaRec->fgIsTxAllowed != fgIsTxAllowed) {
+		for (ucIdx = 0; ucIdx < NUM_OF_PER_STA_TX_QUEUES; ucIdx++) {
+			if (fgIsTxAllowed) {
+				prSrcQ = &prStaRec->arPendingTxQueue[ucIdx];
+				prDstQ = &prStaRec->arTxQueue[ucIdx];
+			} else {
+				prSrcQ = &prStaRec->arTxQueue[ucIdx];
+				prDstQ = &prStaRec->arPendingTxQueue[ucIdx];
+			}
+
+			QUEUE_CONCATENATE_QUEUES_HEAD(prDstQ, prSrcQ);
+			prStaRec->aprTargetQueue[ucIdx] = prDstQ;
 		}
 
-		QUEUE_CONCATENATE_QUEUES_HEAD(prDstQ, prSrcQ);
-		prStaRec->aprTargetQueue[ucIdx] = prDstQ;
-	}
-
-	if (prStaRec->fgIsTxAllowed != fgIsTxAllowed) {
 		if (fgIsTxAllowed)
 			prAdapter->rQM.u4TxAllowedStaCount++;
 		else
 			prAdapter->rQM.u4TxAllowedStaCount--;
 	}
 	prStaRec->fgIsTxAllowed = fgIsTxAllowed;
-
-	DBGLOG(QM, INFO, "Set Sta[%u] TxAllowed[%u] %s TxQ\n", prStaRec->ucIndex, fgIsTxAllowed,
-		fgIsTxAllowed ? "normal":"pending");
 }
 
 /*----------------------------------------------------------------------------*/
@@ -2343,12 +2355,15 @@ P_SW_RFB_T qmHandleRxPackets(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfbList
 		/* Decide the Destination */
 #if CFG_RX_PKTS_DUMP
 		if (prAdapter->rRxCtrl.u4RxPktsDumpTypeMask & BIT(HIF_RX_PKT_TYPE_DATA)) {
-			DBGLOG(SW4, INFO, "QM RX DATA: net _u sta idx %u wlan idx %u ssn _u tid %u ptype %u 11 %u\n",
-			       /* HIF_RX_HDR_GET_NETWORK_IDX(prHifRxHdr), */
-			       prCurrSwRfb->ucStaRecIdx, prRxStatus->ucWlanIdx,
-			       /* HIF_RX_HDR_GET_SN(prHifRxHdr), *//* The new SN of the frame */
-			       HAL_RX_STATUS_GET_TID(prRxStatus),
-			       prCurrSwRfb->ucPacketType, prCurrSwRfb->fgReorderBuffer);
+			DBGLOG(SW4, INFO,
+				"QM RX DATA: sta idx %u wlan idx %u ssn:%u\n",
+				prCurrSwRfb->ucStaRecIdx, prRxStatus->ucWlanIdx,
+				prCurrSwRfb->u2SSN);
+			DBGLOG(SW4, INFO,
+				"QM RX DATA: tid %u ptype %u reorder %u\n",
+				HAL_RX_STATUS_GET_TID(prRxStatus),
+				prCurrSwRfb->ucPacketType,
+				prCurrSwRfb->fgReorderBuffer);
 
 			DBGLOG_MEM8(SW4, TRACE, (PUINT_8) prCurrSwRfb->pvHeader, prCurrSwRfb->u2PacketLen);
 		}
@@ -2513,36 +2528,71 @@ P_SW_RFB_T qmHandleRxPackets(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfbList
 		}
 #endif
 
-		if (prCurrSwRfb->fgReorderBuffer && !fgIsBMC && fgIsHTran) {
-			/* If this packet should dropped or indicated to the host immediately,
-			 *  it should be enqueued into the rReturnedQue with specific flags. If
-			 *  this packet should be buffered for reordering, it should be enqueued
-			 *  into the reordering queue in the STA_REC rather than into the
-			 *  rReturnedQue.
-			 */
-			qmProcessPktWithReordering(prAdapter, prCurrSwRfb, prReturnedQue);
+#if CFG_SUPPORT_AMSDU_ATTACK_DETECTION
+		if (prCurrSwRfb->fgDataFrame && prCurrSwRfb->prStaRec &&
+			qmAmsduAttackDetection(prAdapter, prCurrSwRfb)) {
+			prCurrSwRfb->eDst = RX_PKT_DESTINATION_NULL;
+			QUEUE_INSERT_TAIL(prReturnedQue,
+				(P_QUE_ENTRY_T) prCurrSwRfb);
+			DBGLOG(QM, INFO, "Drop by AMSDU attack packet\n");
+			continue;
+		}
+#endif /* CFG_SUPPORT_AMSDU_ATTACK_DETECTION */
 
-		} else if (prCurrSwRfb->fgDataFrame) {
+#if CFG_SUPPORT_FAKE_EAPOL_DETECTION
+		if (prCurrSwRfb->fgDataFrame && prCurrSwRfb->prStaRec &&
+			qmDetectRxInvalidEAPOL(prAdapter, prCurrSwRfb)) {
+			prCurrSwRfb->eDst = RX_PKT_DESTINATION_NULL;
+			QUEUE_INSERT_TAIL(prReturnedQue,
+				(P_QUE_ENTRY_T) prCurrSwRfb);
+			DBGLOG(QM, INFO, "Drop by EAPOL filter\n");
+			continue;
+		}
+#endif /* CFG_SUPPORT_FAKE_EAPOL_DETECTION */
+
+		if (prCurrSwRfb->fgDataFrame) {
 			/* Check Class Error */
 			if (secCheckClassError(prAdapter, prCurrSwRfb, prCurrSwRfb->prStaRec) == TRUE) {
 				P_RX_BA_ENTRY_T prReorderQueParm = NULL;
+				P_HW_MAC_RX_DESC_T prRS = NULL;
 
 				/* Invalid BA aggrement */
-				if (fgIsHTran) {
+				if (fgIsHTran && !prCurrSwRfb->fgReorderBuffer) {
 					UINT_16 u2FrameCtrl = 0;
 
 					u2FrameCtrl = HAL_RX_STATUS_GET_FRAME_CTL_FIELD(prCurrSwRfb->prRxStatusGroup4);
 					/* Check FC type, if DATA, then no-reordering */
-					if ((u2FrameCtrl & MASK_FRAME_TYPE) == MAC_FRAME_DATA) {
+					if (((u2FrameCtrl & MASK_FRAME_TYPE)
+						== MAC_FRAME_DATA)
+						|| (prCurrSwRfb->ucTid
+						>= CFG_RX_MAX_BA_TID_NUM)) {
 						DBGLOG(QM, TRACE, "FC [0x%04X], no-reordering...\n", u2FrameCtrl);
 					} else {
+						/* Get TID for BA entry */
+						prRS = prCurrSwRfb->prRxStatus;
+						prCurrSwRfb->ucTid = HAL_RX_STATUS_GET_TID(prRS);
 						prReorderQueParm =
 						    ((prCurrSwRfb->prStaRec->
 						      aprRxReorderParamRefTbl)[prCurrSwRfb->ucTid]);
 					}
+				} else {
+					if (fgIsHTran &&
+						(prCurrSwRfb->ucTid
+						< CFG_RX_MAX_BA_TID_NUM)) {
+					/* Get TID for BA entry */
+					prRS = prCurrSwRfb->prRxStatus;
+					prCurrSwRfb->ucTid =
+						 HAL_RX_STATUS_GET_TID(prRS);
+					prReorderQueParm =
+						((prCurrSwRfb->prStaRec->
+						aprRxReorderParamRefTbl)
+						[prCurrSwRfb->ucTid]);
+					}
 				}
-
-				if (prReorderQueParm && prReorderQueParm->fgIsValid && !fgIsBMC)
+				/* Only UC with valid BA entry */
+				/* pass to reordering */
+				if (prReorderQueParm && !fgIsBMC &&
+					prReorderQueParm->fgIsValid)
 					qmProcessPktWithReordering(prAdapter, prCurrSwRfb, prReturnedQue);
 				else
 					qmHandleRxPackets_AOSP_1;
@@ -2590,6 +2640,326 @@ P_SW_RFB_T qmHandleRxPackets(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfbList
 #endif
 
 }
+
+#if CFG_SUPPORT_FAKE_EAPOL_DETECTION
+/*----------------------------------------------------------------------------*/
+/*!
+ * \brief qmDetectRxInvalidEAPOL() is used for fake EAPOL checking.
+ *
+ * \param[in] prSwRfb        The RFB which is being processed.
+ *
+ * \return TRUE when we need to drop it
+ */
+/*----------------------------------------------------------------------------*/
+u_int8_t qmDetectRxInvalidEAPOL(IN P_ADAPTER_T prAdapter,
+	IN P_SW_RFB_T prSwRfb)
+{
+	uint8_t *pucPkt = NULL;
+	uint8_t ucBssIndex;
+	BSS_INFO_T *prBssInfo;
+	uint16_t u2EtherType = 0;
+	u_int8_t fgDrop = FALSE;
+	P_STA_RECORD_T prStaRec;
+	uint8_t *pucPaylod = NULL;
+	uint16_t u2FrameCtrl;
+	WLAN_MAC_HEADER_T *prWlanHeader = NULL;
+	uint8_t *pucDaAddr = NULL;
+	uint8_t jj, fgFound = FALSE;
+	P_STA_RECORD_T prTmpStaRec;
+
+	if (!prSwRfb) {
+		DBGLOG(QM, WARN, "qmDetectRxInvalidEAPOL NULL\n");
+		return FALSE;
+	}
+
+	if (prSwRfb->u2PacketLen <= ETHER_HEADER_LEN)
+		return FALSE;
+
+	/* check if sta rec exist*/
+	if (!prSwRfb->prStaRec) {
+		DBGLOG(QM, WARN, "Drop: sta rec not found\n");
+		return TRUE;
+	}
+
+	pucPkt = prSwRfb->pvHeader;
+	if (!pucPkt)
+		return FALSE;
+
+	prStaRec = prSwRfb->prStaRec;
+
+	ucBssIndex = prSwRfb->prStaRec->ucBssIndex;
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+	if (!prBssInfo) {
+		DBGLOG(QM, WARN, "prBssInfo NULL\n");
+		return FALSE;
+	}
+
+	if (prSwRfb->fgHdrTran) {
+		u2FrameCtrl = HAL_RX_STATUS_GET_FRAME_CTL_FIELD(
+			prSwRfb->prRxStatusGroup4);
+
+		u2EtherType = (pucPkt[ETH_TYPE_LEN_OFFSET] << 8)
+			| (pucPkt[ETH_TYPE_LEN_OFFSET + 1]);
+	} else {
+		prWlanHeader = (WLAN_MAC_HEADER_T *) prSwRfb->pvHeader;
+		u2FrameCtrl = prWlanHeader->u2FrameCtrl;
+		pucPaylod = prSwRfb->pvHeader + prSwRfb->u2HeaderLen;
+
+		if (prSwRfb->ucHeaderOffset) {
+			/* HW 4-byte align */
+			pucPaylod += 2;
+		}
+
+		pucPaylod += LLC_LEN;
+		u2EtherType = (pucPaylod[ETH_TYPE_LEN_OFFSET] << 8)
+			| (pucPaylod[ETH_TYPE_LEN_OFFSET + 1]);
+
+		/* if fragment middle/end, NO eth type so set 0 */
+		if (prSwRfb->fgFragFrame) {
+			if (!RXM_IS_MORE_DATA(u2FrameCtrl))
+				u2EtherType = 0x0;
+		}
+
+	}
+
+	DBGLOG(RX, TRACE, "EtherType:0x%x\n", u2EtherType);
+
+	/* if it's already drop by other feature, ignore here */
+	if (prSwRfb->eDst == RX_PKT_DESTINATION_NULL)
+		return FALSE;
+
+	if (prBssInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT) {
+
+		if (u2EtherType != ETH_P_1X)
+			return FALSE;
+
+		/* AP: check if EAPOL DA match any case */
+		if (prSwRfb->fgHdrTran) {
+			pucDaAddr = prSwRfb->pvHeader;
+
+			DBGLOG(RSN, TRACE,
+				" DA:" MACSTR " BSSID:" MACSTR "\n",
+				MAC2STR(pucDaAddr),
+				MAC2STR(prBssInfo->aucBSSID));
+		} else {
+			/* check A3 as DA*/
+			pucDaAddr = prWlanHeader->aucAddr3;
+			DBGLOG(RSN, TRACE,
+				" A3:" MACSTR "\n", MAC2STR(pucDaAddr));
+		}
+
+		if (EQUAL_MAC_ADDR(pucDaAddr, prBssInfo->aucBSSID)) {
+			/* DA is me */
+			return FALSE;
+		}
+
+		/* check if DA match any starec */
+		for (jj = 0; jj < CFG_STA_REC_NUM; jj++) {
+			prTmpStaRec = cnmGetStaRecByIndex(prAdapter, jj);
+			if (prTmpStaRec) {
+				if (EQUAL_MAC_ADDR(pucDaAddr,
+					prTmpStaRec->aucMacAddr)) {
+					fgFound = TRUE;
+					break;
+				}
+			}
+		}
+
+		if (fgFound) {
+			/* DA in sta rec */
+			fgDrop = FALSE;
+		} else {
+			DBGLOG(QM, INFO, "DA sta rec not found\n");
+			fgDrop = TRUE;
+		}
+
+		/* if eapol-forward, check if add key */
+		if ((prSwRfb->eDst
+				== RX_PKT_DESTINATION_HOST_WITH_FORWARD
+			|| prSwRfb->eDst == RX_PKT_DESTINATION_FORWARD)) {
+			/* fgIsTxKeyReady is set by nicEventAddPkeyDone */
+			if (prStaRec->fgIsTxKeyReady != TRUE) {
+				DBGLOG(QM, INFO, "Drop AP:TxKeyReady false\n");
+				fgDrop = TRUE;
+			}
+		}
+
+	} else if (prBssInfo->eCurrentOPMode == OP_MODE_INFRASTRUCTURE) {
+
+		/* Do not drop EAPOL */
+		if (u2EtherType == ETH_P_1X)
+			return FALSE;
+
+		/* 1. Drop packet if sta rec not found.
+		 *     This might be cause by wtbl index mismatch
+		 *  2. Drop packet if not finish add key
+		 *     fgIsTxKeyReady is set by nicEventAddPkeyDone
+		 */
+		if (secIsProtectedBss(prAdapter, prBssInfo)) {
+			if (prStaRec->fgIsTxKeyReady != TRUE) {
+				DBGLOG(QM, WARN,
+					"fgIsTxKeyReady false: non-open conn.\n");
+				fgDrop = TRUE;
+			}
+		} else {
+			if (prStaRec->fgIsTxAllowed != TRUE) {
+				DBGLOG(QM, WARN,
+					"fgIsTxAllowed false: open conn.\n");
+				fgDrop = TRUE;
+			}
+		}
+
+	}
+
+	return fgDrop;
+}
+#endif /* CFG_SUPPORT_FAKE_EAPOL_DETECTION */
+
+#if CFG_SUPPORT_AMSDU_ATTACK_DETECTION
+/*----------------------------------------------------------------------------*/
+/*!
+ * \brief AMSDU Attack Detection
+ *
+ * \param[in] prSwRfb The RX packet to process
+ *
+ * \return TRUE when we find an amsdu attack
+ */
+/*----------------------------------------------------------------------------*/
+u_int8_t qmAmsduAttackDetection(IN P_ADAPTER_T prAdapter,
+	IN P_SW_RFB_T prSwRfb)
+{
+	u_int8_t fgDrop = FALSE;
+	uint8_t aucTaAddr[MAC_ADDR_LEN];
+	uint8_t *pucTaAddr = NULL, *pucRaAddr = NULL;
+	uint8_t *pucSaAddr = NULL, *pucDaAddr = NULL;
+	uint8_t *pucAmsduAddr = NULL, *pucCmpAddr = NULL;
+	uint8_t ucBssIndex = 0;
+	BSS_INFO_T *prBssInfo = NULL;
+	STA_RECORD_T *prStaRec = NULL;
+	uint16_t u2FrameCtrl, u2SSN;
+	WLAN_MAC_HEADER_T *prWlanHeader = NULL;
+	uint8_t ucTid;
+	uint8_t *pucPaylod = NULL;
+
+
+	DEBUGFUNC("qmAmsduAttackDetection");
+
+	/* error handle: drop this packet */
+	if (!prSwRfb)
+		return TRUE;
+
+	prStaRec = prSwRfb->prStaRec;
+	/* error handle: drop this packet */
+	if (!prStaRec)
+		return TRUE;
+
+	/* 802.11 header TA */
+	if (prSwRfb->fgHdrTran) {
+		u2SSN = HAL_RX_STATUS_GET_SEQFrag_NUM(
+			prSwRfb->prRxStatusGroup4) >> RX_STATUS_SEQ_NUM_OFFSET;
+		u2FrameCtrl = HAL_RX_STATUS_GET_FRAME_CTL_FIELD(
+			prSwRfb->prRxStatusGroup4);
+		HAL_RX_STATUS_GET_TA(prSwRfb->prRxStatusGroup4, aucTaAddr);
+		pucTaAddr = &aucTaAddr[0];
+		pucDaAddr = prSwRfb->pvHeader;
+		pucSaAddr = prSwRfb->pvHeader + MAC_ADDR_LEN;
+	} else {
+		prWlanHeader = (WLAN_MAC_HEADER_T *) prSwRfb->pvHeader;
+		u2SSN = prWlanHeader->u2SeqCtrl >> MASK_SC_SEQ_NUM_OFFSET;
+		u2FrameCtrl = prWlanHeader->u2FrameCtrl;
+		pucTaAddr = prWlanHeader->aucAddr2;
+
+		pucPaylod = prSwRfb->pvHeader + prSwRfb->u2HeaderLen;
+		if (prSwRfb->ucHeaderOffset) {
+			/* HW 4-byte align */
+			pucPaylod += 2;
+		}
+		pucDaAddr = pucPaylod;
+		pucSaAddr = pucPaylod + MAC_ADDR_LEN;
+	}
+
+	/* 802.11 header RA */
+	ucBssIndex = prStaRec->ucBssIndex;
+	/* Handle if  out of bss index range*/
+	if (ucBssIndex > HW_BSSID_NUM) {
+		DBGLOG(QM, INFO,
+		    "Invalid bssidx:%u\n", ucBssIndex);
+		return TRUE;
+	}
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+	pucRaAddr = &prBssInfo->aucOwnMacAddr[0];
+
+	if (RXM_IS_QOS_DATA_FRAME(u2FrameCtrl)) {
+		ucTid = prSwRfb->ucTid;
+	} else {
+		/* for non-qos data, use TID_NUM as tid */
+		ucTid = TID_NUM;
+	}
+
+	if (prSwRfb->ucPayloadFormat == RX_PAYLOAD_FORMAT_MSDU) {
+		return FALSE;
+	} else if (prSwRfb->ucPayloadFormat ==
+				RX_PAYLOAD_FORMAT_FIRST_SUB_AMSDU) {
+		if (RXM_IS_FROM_DS(u2FrameCtrl)) {
+			/* FromDS: A-MSDU DA must match 802.11 header RA */
+			pucCmpAddr = pucDaAddr;
+			pucAmsduAddr = pucRaAddr;
+		} else if (RXM_IS_TO_DS(u2FrameCtrl)) {
+			/* ToDS: A-MSDU SA must match 802.11 header TA */
+			pucCmpAddr = pucSaAddr;
+			pucAmsduAddr = pucTaAddr;
+		} else {
+			/* for TDLS: FromDS = ToDS =0, do not drop */
+			/* for WDS: FromDS = ToDS =1, do not drop */
+			return FALSE;
+		}
+
+		if (!pucCmpAddr || !pucSaAddr)
+			return TRUE;
+
+		if (UNEQUAL_MAC_ADDR(pucCmpAddr, pucAmsduAddr)) {
+			/* mark to drop amsdu with same SeqNo */
+			fgDrop = TRUE;
+		}
+
+		DBGLOG(QM, TRACE,
+			"QM: FromDS:%d ToDS:%d TID:%u SN:%u PF:%u\n",
+			RXM_IS_FROM_DS(u2FrameCtrl), RXM_IS_TO_DS(u2FrameCtrl),
+			ucTid, u2SSN, prSwRfb->ucPayloadFormat
+			);
+
+		DBGLOG(QM, TRACE,
+			" TA:" MACSTR " RA:" MACSTR
+			" DA:" MACSTR " SA:" MACSTR " Drop:%d\n",
+			MAC2STR(pucTaAddr), MAC2STR(pucRaAddr),
+			MAC2STR(pucDaAddr), MAC2STR(pucSaAddr),
+			fgDrop
+			);
+
+		prStaRec->afgIsAmsduInvalid[ucTid] = fgDrop;
+		prStaRec->au2AmsduInvalidSN[ucTid] = u2SSN;
+	} else {
+		/* drop it if find an asmdu attack in station record */
+		if (prStaRec->afgIsAmsduInvalid[ucTid] == TRUE
+			&& prStaRec->au2AmsduInvalidSN[ucTid] == u2SSN) {
+			fgDrop = TRUE;
+			DBGLOG(QM, INFO,
+				"QM: AMSDU Attack TID:%u SN:%u PF:%u\n",
+				ucTid, u2SSN, prSwRfb->ucPayloadFormat);
+		}
+
+		/* reset flag when find last subframe */
+		if (prSwRfb->ucPayloadFormat ==
+				RX_PAYLOAD_FORMAT_LAST_SUB_AMSDU) {
+			prStaRec->afgIsAmsduInvalid[ucTid] = FALSE;
+			prStaRec->au2AmsduInvalidSN[ucTid] = 0XFFFF;
+		}
+	}
+
+	return fgDrop;
+}
+#endif /* CFG_SUPPORT_AMSDU_ATTACK_DETECTION */
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -2650,6 +3020,17 @@ VOID qmProcessPktWithReordering(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb,
 #endif
 
 	RX_INC_CNT(&prAdapter->rRxCtrl, RX_DATA_REORDER_TOTAL_COUINT);
+
+	if (prSwRfb->ucTid >= CFG_RX_MAX_BA_TID_NUM) {
+		DBGLOG(QM, WARN, "TID from RXD = %d, out of range!!\n",
+			prSwRfb->ucTid);
+		DBGLOG_MEM8(QM, ERROR, prSwRfb->pucRecvBuff,
+			HAL_RX_STATUS_GET_RX_BYTE_CNT(prRxStatus));
+		prSwRfb->eDst = RX_PKT_DESTINATION_NULL;
+		QUEUE_INSERT_TAIL(prReturnedQue,
+			(P_QUE_ENTRY_T) prSwRfb);
+		return;
+	}
 
 	/* Check whether the BA agreement exists */
 	prReorderQueParm = ((prStaRec->aprRxReorderParamRefTbl)[prSwRfb->ucTid]);
@@ -2786,6 +3167,14 @@ VOID qmProcessBarFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb, OUT P_QU
 		return;
 	}
 #endif
+	/* Check index out of bound */
+	if (prSwRfb->ucTid >= CFG_RX_MAX_BA_TID_NUM) {
+		DBGLOG(QM, WARN,
+			"QM: (Warning) index out of bound: ucTid = %d\n",
+			prSwRfb->ucTid);
+		return;
+	}
+
 
 	/* Check whether the BA agreement exists */
 	prReorderQueParm = prStaRec->aprRxReorderParamRefTbl[prSwRfb->ucTid];
@@ -3653,9 +4042,11 @@ qmAddRxBaEntry(IN P_ADAPTER_T prAdapter,
 
 	ASSERT(ucStaRecIdx < CFG_STA_REC_NUM);
 
-	if (ucStaRecIdx >= CFG_STA_REC_NUM) {
+	if (ucStaRecIdx >= CFG_STA_REC_NUM || ucTid >= CFG_RX_MAX_BA_TID_NUM) {
 		/* Invalid STA_REC index, discard the event packet */
-		DBGLOG(QM, WARN, "QM: (WARNING) RX ADDBA Event for a invalid ucStaRecIdx = %d\n", ucStaRecIdx);
+		DBGLOG(QM, WARN,
+			"QM: (WARNING) RX ADDBA Event for a invalid ucStaRecIdx = %d, ucTID=%d\n",
+			ucStaRecIdx, ucTid);
 		return FALSE;
 	}
 
@@ -3726,7 +4117,7 @@ qmAddRxBaEntry(IN P_ADAPTER_T prAdapter,
 
 VOID qmDelRxBaEntry(IN P_ADAPTER_T prAdapter, IN UINT_8 ucStaRecIdx, IN UINT_8 ucTid, IN BOOLEAN fgFlushToHost)
 {
-	P_RX_BA_ENTRY_T prRxBaEntry;
+	P_RX_BA_ENTRY_T prRxBaEntry = NULL;
 	P_STA_RECORD_T prStaRec;
 	P_SW_RFB_T prFlushedPacketList = NULL;
 	P_QUE_MGT_T prQM = &prAdapter->rQM;
@@ -3744,7 +4135,9 @@ VOID qmDelRxBaEntry(IN P_ADAPTER_T prAdapter, IN UINT_8 ucStaRecIdx, IN UINT_8 u
 #endif
 
 	/* Remove the BA entry for the same (STA, TID) tuple if it exists */
-	prRxBaEntry = prStaRec->aprRxReorderParamRefTbl[ucTid];
+	if (ucTid < CFG_RX_MAX_BA_TID_NUM) {
+		prRxBaEntry = prStaRec->aprRxReorderParamRefTbl[ucTid];
+	}
 
 	if (prRxBaEntry) {
 

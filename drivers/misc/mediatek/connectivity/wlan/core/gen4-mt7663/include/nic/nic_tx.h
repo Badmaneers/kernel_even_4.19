@@ -215,6 +215,8 @@
 #define NIC_TX_AC_VI_REMAINING_TX_TIME	TX_DESC_TX_TIME_NO_LIMIT
 #define NIC_TX_MGMT_REMAINING_TX_TIME		2000
 
+#define NIC_TX_BMC_REMAINING_TX_TIME        2000	/* in unit of ms */
+
 #define NIC_TX_CRITICAL_DATA_TID                7
 
 #define HW_MAC_TX_DESC_APPEND_T_LENGTH          44
@@ -1898,6 +1900,10 @@ void nicTxMsduDoneCb(IN struct GLUE_INFO *prGlueInfo, IN struct QUE *prQue);
 void nicTxCancelSendingCmd(IN struct ADAPTER *prAdapter,
 	IN struct CMD_INFO *prCmdInfo);
 uint32_t nicTxGetMaxPageCntPerFrame(IN struct ADAPTER *prAdapter);
+
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+void nicTxSwTsoClearSkbQ(IN struct ADAPTER *prAdapter);
+#endif
 
 /* TX Direct functions : BEGIN */
 void nicTxDirectStartCheckQTimer(IN struct ADAPTER *prAdapter);

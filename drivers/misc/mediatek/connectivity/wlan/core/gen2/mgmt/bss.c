@@ -59,8 +59,10 @@ APPEND_VAR_IE_ENTRY_T txBcnIETable[] = {
 #endif
 #endif /* CFG_ENABLE_WIFI_DIRECT */
 #if CFG_SUPPORT_MTK_SYNERGY
-	{(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE}	/* 221 */
+	{(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE},	/* 221 */
 #endif
+	{(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL, rsnGenerateRSNXIE}	/* 224 */
+
 
 };
 
@@ -70,6 +72,7 @@ APPEND_VAR_IE_ENTRY_T txProbRspIETable[] = {
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_HT_CAP), NULL, rlmRspGenerateHtCapIE},	/* 45 */
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_HT_OP), NULL, rlmRspGenerateHtOpIE},	/* 61 */
 #if CFG_ENABLE_WIFI_DIRECT
+	{(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL, rsnGenerateWPAIE},	/* 221 */
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL, rsnGenerateRSNIE},	/* 48 */
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_OBSS_SCAN), NULL, rlmRspGenerateObssScanIE},	/* 74 */
 #endif
@@ -77,8 +80,9 @@ APPEND_VAR_IE_ENTRY_T txProbRspIETable[] = {
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL, rsnGenerateWpaNoneIE},	/* 221 */
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_WMM_PARAM), NULL, mqmGenerateWmmParamIE},	/* 221 */
 #if CFG_SUPPORT_MTK_SYNERGY
-	{(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE}	/* 221 */
+	{(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE},	/* 221 */
 #endif
+	{(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL, rsnGenerateRSNXIE}	/* 224 */
 
 };
 
@@ -1875,7 +1879,7 @@ VOID ibssInitForAdHoc(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo)
 /*----------------------------------------------------------------------------*/
 VOID bssInitForAP(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo, IN BOOLEAN fgIsRateUpdate)
 {
-	UINT_8 ucLowestBasicRateIndex;
+	UINT_8 ucLowestBasicRateIndex = RATE_2M_INDEX;
 
 	P_AC_QUE_PARMS_T prACQueParms;
 

@@ -115,6 +115,7 @@ APPEND_VAR_IE_ENTRY_T txAssocReqIETable[] = {
 	,			/* 221 */
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL, rsnGenerateRSNIE}
 	,			/* 48 */
+	{(ELEM_HDR_LEN + 1), NULL, assocGenerateMDIE}, /* Element ID: 54 */
 #if CFG_SUPPORT_802_11AC
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_VHT_CAP), NULL, rlmReqGenerateVhtCapIE}
 	,			/*191 */
@@ -126,6 +127,12 @@ APPEND_VAR_IE_ENTRY_T txAssocReqIETable[] = {
 	,			/* 221 */
 #endif
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL, rsnGenerateWPAIE}	/* 221 */
+	,
+	{0, rsnCalRSNXELen, rsnGenerateRSNXE} /* 244 */
+#if CFG_SUPPORT_OWE
+	,
+	{0, rsnCalOweIELen, rsnGenerateOWEIE} /* 255 */
+#endif
 };
 
 #if CFG_SUPPORT_AAA
@@ -1070,9 +1077,10 @@ WLAN_STATUS assocSendDisAssocFrame(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T p
 			MAC_TX_RESERVED_FIELD);
 		DBGLOG(SAA, INFO, "notification of TX disassociation, %d\n",
 			prMsduInfo->u2FrameLength);
-		cfg80211_tx_mlme_mgmt(prAdapter->prGlueInfo->prDevHandler,
-			(UINT_8 *)prDisassocFrame,
-			(size_t)prMsduInfo->u2FrameLength);
+		kalIndicateTxDisassocToUpperLayer(
+				prAdapter->prGlueInfo->prDevHandler,
+				(PUINT_8)prDisassocFrame,
+				(size_t)prMsduInfo->u2FrameLength);
 		DBGLOG(SAA, INFO, "notification of TX disassociation, Done\n");
 	}
 #endif
@@ -1255,7 +1263,15 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 				prIeSupportedRate = SUP_RATES_IE(pucIE);
 
 			break;
-
+		case ELEM_ID_PWR_CAP:
+			if (IE_LEN(pucIE) != ELEM_MAX_LEN_POWER_CAP)
+				return WLAN_STATUS_FAILURE;
+			break;
+		case ELEM_ID_SUP_CHS:
+			if ((IE_LEN(pucIE) > ELEM_MAX_LEN_SUPPORTED_CHANNELS)
+				|| (IE_LEN(pucIE) & 0x01))
+				return WLAN_STATUS_FAILURE;
+			break;
 		case ELEM_ID_EXTENDED_SUP_RATES:
 			if (!prIeExtSupportedRate)
 				prIeExtSupportedRate = EXT_SUP_RATES_IE(pucIE);
@@ -1271,6 +1287,10 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 			if (prAdapter->fgIsP2PRegistered && IS_STA_IN_P2P(prStaRec)) {
 				prIeRsn = RSN_IE(pucIE);
 				rsnParserCheckForRSNCCMPPSK(prAdapter, prIeRsn, prStaRec, &u2StatusCode);
+				if (u2StatusCode ==
+				    STATUS_CODE_INVALID_INFO_ELEMENT) {
+					return WLAN_STATUS_FAILURE;
+				}
 				if (u2StatusCode != STATUS_CODE_SUCCESSFUL) {
 					*pu2StatusCode = u2StatusCode;
 					return WLAN_STATUS_SUCCESS;
@@ -1717,5 +1737,48 @@ void assoc_build_nonwfa_vend_ie(P_ADAPTER_T prAdapter,
 			   len);
 	prMsduInfo->u2FrameLength += len;
 }
-
 #endif /* CFG_SUPPORT_AAA */
+
+void assocGenerateMDIE(P_ADAPTER_T prAdapter,
+		       P_MSDU_INFO_T prMsduInfo)
+{
+	/*  Don't add Mobility Domain to avoid IOT issue,
+	  *  some AP have Mobility Domain IE in beacon,
+	  *  but cannot reconnect it with 11r squence
+	  */
+	struct FT_IES *prFtIEs = &prAdapter->prGlueInfo->rFtIeForTx;
+	uint8_t *pucBuffer =
+		(uint8_t *)prMsduInfo->prPacket + prMsduInfo->u2FrameLength;
+	ENUM_PARAM_AUTH_MODE_T eAuthMode =
+		prAdapter->rWifiVar.rConnSettings.eAuthMode;
+
+	/* don't include MDIE in assoc request frame if auth mode is not FT
+	 * related
+	 */
+	if (eAuthMode != AUTH_MODE_WPA2_FT &&
+		eAuthMode != AUTH_MODE_WPA2_FT_PSK)
+		return;
+
+	if (!prFtIEs->prMDIE) {
+		P_BSS_DESC_T prBssDesc =
+			prAdapter->rWifiVar.rAisFsmInfo.prTargetBssDesc;
+		uint8_t *pucIE = &prBssDesc->aucIEBuf[0];
+		uint16_t u2IeLen = prBssDesc->u2IELength;
+		uint16_t u2IeOffSet = 0;
+
+		IE_FOR_EACH(pucIE, u2IeLen, u2IeOffSet)
+		{
+			if (IE_ID(pucIE) == ELEM_ID_MOBILITY_DOMAIN) {
+				/* IE size for MD IE is fixed, it is 5 */
+				prMsduInfo->u2FrameLength += 5;
+				kalMemCopy(pucBuffer, pucIE, 5);
+				break;
+			}
+		}
+		return;
+	}
+	prMsduInfo->u2FrameLength +=
+		5; /* IE size for MD IE is fixed, it is 5 */
+	kalMemCopy(pucBuffer, prFtIEs->prMDIE, 5);
+}
+

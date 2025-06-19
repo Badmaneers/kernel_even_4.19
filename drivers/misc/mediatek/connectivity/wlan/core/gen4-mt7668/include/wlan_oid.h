@@ -115,9 +115,19 @@
 #define PARAM_PACKET_FILTER_PROMISCUOUS         0x00000020
 #define PARAM_PACKET_FILTER_ALL_LOCAL           0x00000080
 #if CFG_ENABLE_WIFI_DIRECT_CFG_80211
+#if CFG_SUPPORT_SOFTAP_WPA3
+#define PARAM_PACKET_FILTER_P2P_MASK             0xF0000000
+#else
 #define PARAM_PACKET_FILTER_P2P_MASK             0xC0000000
+#endif
 #define PARAM_PACKET_FILTER_PROBE_REQ           0x80000000
 #define PARAM_PACKET_FILTER_ACTION_FRAME      0x40000000
+#define PARAM_PACKET_FILTER_AUTH				0x20000000
+#define PARAM_PACKET_FILTER_ASSOC_REQ			0x10000000
+#endif
+
+#if CFG_DROP_NOT_MY_BSSID
+#define PARAM_PACKET_FILTER_DROP_NOT_MY_BSSID           0x00020000
 #endif
 
 #if CFG_SLT_SUPPORT
@@ -195,6 +205,8 @@ typedef enum _ENUM_PARAM_AUTH_MODE_T {
 	AUTH_MODE_WPA_NONE,	/*!< For Ad hoc */
 	AUTH_MODE_WPA2,
 	AUTH_MODE_WPA2_PSK,
+	AUTH_MODE_WPA2_FT,	/* Fast Bss Transition for 802.1x */
+	AUTH_MODE_WPA2_FT_PSK,	/* Fast Bss Transition for WPA2 PSK */
 #if CFG_SUPPORT_CFG80211_AUTH
 	AUTH_MODE_WPA2_SAE,
 #endif
@@ -419,11 +431,15 @@ typedef struct _PARAM_KEY_T {
 	/* Following add to change the original windows structure */
 } PARAM_KEY_T, *P_PARAM_KEY_T;
 
+/* for more remove key control (ucCtrlFlag) */
+#define FLAG_RM_KEY_CTRL_WO_OID     BIT(0)	/* not OID operation */
+
 typedef struct _PARAM_REMOVE_KEY_T {
 	UINT_32 u4Length;	/*!< Length of structure */
 	UINT_32 u4KeyIndex;	/*!< KeyID */
 	PARAM_MAC_ADDRESS arBSSID;	/*!< MAC address */
 	UINT_8 ucBssIdx;
+	UINT_8 ucCtrlFlag;
 } PARAM_REMOVE_KEY_T, *P_PARAM_REMOVE_KEY_T;
 
 /*! \brief Default key */
@@ -2015,11 +2031,21 @@ typedef struct _PARAM_SCAN_REQUEST_ADV_T {
 /*! \brief CFG80211 Scheduled Scan Request Container            */
 /*--------------------------------------------------------------*/
 typedef struct _PARAM_SCHED_SCAN_REQUEST_T {
-	UINT_32 u4SsidNum;
-	PARAM_SSID_T arSsid[CFG_SCAN_SSID_MATCH_MAX_NUM];
+	UINT_32 u4SsidNum;         /* passed in the probe_reqs */
+	PARAM_SSID_T arSsid[CFG_SCAN_SSID_MAX_NUM];
+	UINT_32 u4MatchSsidNum;   /* matched for a scan request */
+	PARAM_SSID_T arMatchSsid[CFG_SCAN_SSID_MATCH_MAX_NUM];
+	INT_32 ai4RssiThold[CFG_SCAN_SSID_MATCH_MAX_NUM];
+	INT_32 i4MinRssiThold;
+	UINT_8 ucScnFuncMask;
+	UINT_8 aucRandomMac[MAC_ADDR_LEN];
+	UINT_8 aucRandomMacMask[MAC_ADDR_LEN];
 	UINT_32 u4IELength;
-	PUINT_8 pucIE;
-	UINT_16 u2ScanInterval;	/* in milliseconds */
+	UINT_8 *pucIE;
+	UINT_8 ucChnlNum;
+	UINT_8 *pucChannels;
+	UINT_8 ucMspEntryNum;
+	UINT_16 au2MspList[10]; /* in second */
 } PARAM_SCHED_SCAN_REQUEST, *P_PARAM_SCHED_SCAN_REQUEST;
 
 #if CFG_SUPPORT_PASSPOINT
@@ -2186,6 +2212,13 @@ wlanoidSetBssid(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuffer, IN UINT_32 u4Set
 WLAN_STATUS
 wlanoidSetConnect(IN P_ADAPTER_T prAdapter,
 		  IN PVOID pvSetBuffer, IN UINT_32 u4SetBufferLen, OUT PUINT_32 pu4SetInfoLen);
+
+#if CFG_SUPPORT_CFG80211_AUTH
+WLAN_STATUS
+wlanoidSendAuthAssoc(IN P_ADAPTER_T prAdapter,
+			IN PVOID pvSetBuffer, IN UINT_32 u4SetBufferLen,
+			OUT PUINT_32 pu4SetInfoLen);
+#endif
 
 WLAN_STATUS
 wlanoidSetSsid(IN P_ADAPTER_T prAdapter, IN PVOID pvSetBuffer, IN UINT_32 u4SetBufferLen, OUT PUINT_32 pu4SetInfoLen);
@@ -2510,6 +2543,14 @@ wlanoidQueryStatisticsForLinux(IN P_ADAPTER_T prAdapter,
 
 #endif
 
+/*----------------------------------------------------------------------------*/
+/* query chip temperature information from firmware                           */
+/*----------------------------------------------------------------------------*/
+WLAN_STATUS
+wlanoidQueryTemperature(IN P_ADAPTER_T prAdapter,
+			  IN PVOID pvQueryBuffer, IN UINT_32 u4QueryBufferLen,
+			  OUT PUINT_32 pu4QueryInfoLen);
+
 WLAN_STATUS
 wlanoidQueryMediaStreamMode(IN P_ADAPTER_T prAdapter,
 			    IN PVOID pvQueryBuffer, IN UINT_32 u4QueryBufferLen, OUT PUINT_32 pu4QueryInfoLen);
@@ -2703,6 +2744,12 @@ WLAN_STATUS
 wlanoidSetCountryCode(IN P_ADAPTER_T prAdapter,
 		      IN PVOID pvSetBuffer, IN UINT_32 u4SetBufferLen, OUT PUINT_32 pu4SetInfoLen);
 
+WLAN_STATUS
+wlanoidSet5gEnable(IN P_ADAPTER_T prAdapter,
+		      IN PVOID pvSetBuffer,
+		      IN UINT_32 u4SetBufferLen,
+		      OUT PUINT_32 pu4SetInfoLen);
+
 WLAN_STATUS wlanSendMemDumpCmd(IN P_ADAPTER_T prAdapter, IN PVOID pvQueryBuffer, IN UINT_32 u4QueryBufferLen);
 
 #if CFG_SLT_SUPPORT
@@ -2875,6 +2922,13 @@ wlanoidNotifyFwSuspend(IN P_ADAPTER_T prAdapter,
 				IN PVOID pvSetBuffer,
 				IN UINT_32 u4SetBufferLen,
 				OUT PUINT_32 pu4SetInfoLen);
+
+WLAN_STATUS
+wlanoidPacketKeepAlive(IN P_ADAPTER_T prAdapter,
+		IN PVOID pvSetBuffer,
+		IN UINT_32 u4SetBufferLen,
+		OUT PUINT_32 pu4SetInfoLen);
+
 #if CFG_SUPPORT_DBDC
 WLAN_STATUS
 wlanoidSetDbdcEnable(
@@ -2946,5 +3000,10 @@ wlanoidConfigRoaming(IN P_ADAPTER_T prAdapter,
 *                              F U N C T I O N S
 ********************************************************************************
 */
+WLAN_STATUS
+wlanoidAbortScan(IN P_ADAPTER_T prAdapter,
+			 IN PVOID pvQueryBuffer,
+			 IN UINT_32 u4QueryBufferLen,
+			 OUT PUINT_32 pu4QueryInfoLen);
 
 #endif /* _WLAN_OID_H */

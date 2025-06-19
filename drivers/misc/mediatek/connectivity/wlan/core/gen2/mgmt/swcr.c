@@ -454,6 +454,10 @@ VOID swCtrlCmdCategory0(P_ADAPTER_T prAdapter, UINT_8 ucCate, UINT_8 ucAction, U
 				prTxCtrl = &prAdapter->rTxCtrl;
 				switch (ucOpt0) {
 				case 0:
+					if (ucOpt1 >= TC_NUM) {
+						DBGLOG(SW4, WARN, "ucOpt1 %u invalid\n", ucOpt1);
+						break;
+					}
 					g_au4SwCr[1] = prAdapter->rTxCtrl.rTc.aucFreeBufferCount[ucOpt1];
 					g_au4SwCr[2] = prAdapter->rTxCtrl.rTc.aucMaxNumOfBuffer[ucOpt1];
 					break;

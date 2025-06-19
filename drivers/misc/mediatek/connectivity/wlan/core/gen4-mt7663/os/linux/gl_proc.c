@@ -267,8 +267,12 @@ static int procEfuseDump_show(struct seq_file *s, void *v)
 
 #if  (CFG_EEPROM_PAGE_ACCESS == 1)
 	ASSERT(prGlueInfo);
-	if (prGlueInfo->prAdapter &&
-	    prGlueInfo->prAdapter->chip_info &&
+	if (!prGlueInfo->prAdapter) {
+		seq_puts(s, "prAdapter is null\n");
+		return -EPERM;
+	}
+
+	if (prGlueInfo->prAdapter->chip_info &&
 	    !prGlueInfo->prAdapter->chip_info->is_support_efuse) {
 		seq_puts(s, "efuse ops is invalid\n");
 		return -EPERM; /* return negative value to stop read process */
@@ -1849,52 +1853,52 @@ static ssize_t procDisconnInfoRead(struct file *filp,
 
 
 
-static const struct file_operations dbglevel_ops = {
-	.owner = THIS_MODULE,
-	.read = procDbgLevelRead,
-	.write = procDbgLevelWrite,
+static DEFINE_PROC_OPS_STRUCT(dbglevel_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procDbgLevelRead)
+	DEFINE_PROC_OPS_WRITE(procDbgLevelWrite)
 };
 
 #if WLAN_INCLUDE_PROC
 #if	CFG_SUPPORT_EASY_DEBUG
 
-static const struct file_operations efusedump_ops = {
-	.owner = THIS_MODULE,
-	.open = procEfuseDumpOpen,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = seq_release,
+static DEFINE_PROC_OPS_STRUCT(efusedump_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_OPEN(procEfuseDumpOpen)
+	DEFINE_PROC_OPS_READ(seq_read)
+	DEFINE_PROC_OPS_LSEEK(seq_lseek)
+	DEFINE_PROC_OPS_RELEASE(seq_release)
 };
 
-static const struct file_operations drivercmd_ops = {
-	.owner = THIS_MODULE,
-	.read = procDriverCmdRead,
-	.write = procDriverCmdWrite,
+static DEFINE_PROC_OPS_STRUCT(drivercmd_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procDriverCmdRead)
+	DEFINE_PROC_OPS_WRITE(procDriverCmdWrite)
 };
 
-static const struct file_operations cfg_ops = {
-	.owner = THIS_MODULE,
-	.read = procCfgRead,
-	.write = procCfgWrite,
+static DEFINE_PROC_OPS_STRUCT(cfg_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procCfgRead)
+	DEFINE_PROC_OPS_WRITE(procCfgWrite)
 };
 #endif
 #endif
-static const struct file_operations get_txpwr_tbl_ops = {
-	.owner	 = THIS_MODULE,
-	.read = procGetTxpwrTblRead,
+static DEFINE_PROC_OPS_STRUCT(get_txpwr_tbl_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procGetTxpwrTblRead)
 };
 
 #ifdef CFG_GET_TEMPURATURE
-static const struct file_operations get_temperature_ops = {
-	.owner	 = THIS_MODULE,
-	.read = proc_get_temperature,
+static DEFINE_PROC_OPS_STRUCT(get_temperature_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(proc_get_temperature)
 };
 #endif
 
 #if CFG_DISCONN_DEBUG_FEATURE
-static const struct file_operations disconn_info_ops = {
-	.owner = THIS_MODULE,
-	.read = procDisconnInfoRead,
+static DEFINE_PROC_OPS_STRUCT(disconn_info_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procDisconnInfoRead)
 };
 #endif
 
@@ -2026,10 +2030,10 @@ static ssize_t procMCRWrite(struct file *file, const char __user *buffer,
 
 }				/* end of procMCRWrite() */
 
-static const struct file_operations mcr_ops = {
-	.owner = THIS_MODULE,
-	.read = procMCRRead,
-	.write = procMCRWrite,
+static DEFINE_PROC_OPS_STRUCT(mcr_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procMCRRead)
+	DEFINE_PROC_OPS_WRITE(procMCRWrite)
 };
 
 #if CFG_SUPPORT_SET_CAM_BY_PROC
@@ -2096,9 +2100,9 @@ static ssize_t procSetCamCfgWrite(struct file *file, const char __user *buffer,
 	return count;
 }
 
-static const struct file_operations proc_set_cam_ops = {
-	.owner = THIS_MODULE,
-	.write = procSetCamCfgWrite,
+static DEFINE_PROC_OPS_STRUCT(proc_set_cam_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_WRITE(procSetCamCfgWrite)
 };
 #endif /*CFG_SUPPORT_SET_CAM_BY_PROC */
 
@@ -2230,10 +2234,10 @@ static ssize_t procPktDelayDbgCfgWrite(struct file *file, const char *buffer,
 	return count;
 }
 
-static const struct file_operations proc_pkt_delay_dbg_ops = {
-	.owner = THIS_MODULE,
-	.read = procPktDelayDbgCfgRead,
-	.write = procPktDelayDbgCfgWrite,
+static DEFINE_PROC_OPS_STRUCT(proc_pkt_delay_dbg_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procPktDelayDbgCfgRead)
+	DEFINE_PROC_OPS_WRITE(procPktDelayDbgCfgWrite)
 };
 
 #if CFG_SUPPORT_DEBUG_FS
@@ -2365,10 +2369,10 @@ static ssize_t procCountryWrite(struct file *file, const char __user *buffer,
 	return count;
 }
 
-static const struct file_operations country_ops = {
-	.owner = THIS_MODULE,
-	.read = procCountryRead,
-	.write = procCountryWrite,
+static DEFINE_PROC_OPS_STRUCT(country_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procCountryRead)
+	DEFINE_PROC_OPS_WRITE(procCountryWrite)
 };
 
 static ssize_t procAutoPerfCfgRead(struct file *filp, char __user *buf,
@@ -2454,10 +2458,10 @@ static ssize_t procAutoPerfCfgWrite(struct file *file, const char *buffer,
 	return -EFAULT;
 }
 
-static const struct file_operations auto_perf_ops = {
-	.owner = THIS_MODULE,
-	.read = procAutoPerfCfgRead,
-	.write = procAutoPerfCfgWrite,
+static DEFINE_PROC_OPS_STRUCT(auto_perf_ops) = {
+	DEFINE_PROC_OPS_OWNER(THIS_MODULE)
+	DEFINE_PROC_OPS_READ(procAutoPerfCfgRead)
+	DEFINE_PROC_OPS_WRITE(procAutoPerfCfgWrite)
 };
 
 

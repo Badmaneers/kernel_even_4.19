@@ -1077,6 +1077,7 @@ struct mt66xx_chip_info {
 	uint32_t (*downloadBufferBin)(IN struct ADAPTER *prAdapter);
 	void (*showTaskStack)(IN struct task_struct *tsk,
 			      IN unsigned long *sp);
+	void (*asicDumpSerDummyCR)(IN struct ADAPTER *prAdapter);
 
 	const uint32_t features;	/* feature bits */
 	u_int8_t is_support_hw_amsdu;

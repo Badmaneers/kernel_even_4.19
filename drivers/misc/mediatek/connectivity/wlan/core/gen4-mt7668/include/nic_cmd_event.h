@@ -517,10 +517,13 @@ typedef enum _ENUM_CMD_ID_T {
 	CMD_ID_GET_CHN_LOADING = 0x88,	/* 0x88 (Query) */
 	CMD_ID_GET_BUG_REPORT = 0x89,	/* 0x89 (Query) */
 	CMD_ID_GET_NIC_CAPABILITY_V2 = 0x8A,/* 0x8A (Query) */
+	CMD_ID_GET_TEMPERATURE = 0x8C, /* 0x8C (Query)*/
 
 #if (CFG_SUPPORT_DFS_MASTER == 1)
 	CMD_ID_RDD_ON_OFF_CTRL = 0x8F, /* 0x8F(Set) */
 #endif
+
+	CMD_ID_WFC_KEEP_ALIVE = 0xA0,	/* 0xa0(Set) */
 
 #if CFG_SUPPORT_CAL_RESULT_BACKUP_TO_HOST
 	CMD_ID_CAL_BACKUP_IN_HOST_V2 = 0xAE,	/* 0xAE (Set / Query) */
@@ -605,7 +608,7 @@ typedef enum _ENUM_EVENT_ID_T {
 	EVENT_ID_DUMP_MEM = 0x20,	/* 0x20 (Query - CMD_ID_DUMP_MEM) */
 	EVENT_ID_STA_STATISTICS,	/* 0x21 (Query ) */
 	EVENT_ID_STA_STATISTICS_UPDATE,	/* 0x22 (Unsolicited) */
-	EVENT_ID_NLO_DONE,	/* 0x23 (Unsoiicited) */
+	EVENT_ID_SCHED_SCAN_DONE,	/* 0x23 (Unsoiicited) */
 	EVENT_ID_ADD_PKEY_DONE,	/* 0x24 (Unsoiicited) */
 	EVENT_ID_ICAP_DONE,	/* 0x25 (Unsoiicited) */
 	EVENT_ID_RESOURCE_CONFIG = 0x26,	/* 0x26 (Query - CMD_ID_RESOURCE_CONFIG) */
@@ -652,6 +655,8 @@ typedef enum _ENUM_EVENT_ID_T {
 #endif
 
 	EVENT_ID_TDLS = 0x80,	/* TDLS event_id */
+
+	EVENT_ID_GET_TEMPERATURE = 0x8C,
 
 	EVENT_ID_UPDATE_COEX_PHYRATE = 0x90,	/* 0x90 (Unsolicited) */
 
@@ -780,6 +785,24 @@ typedef enum _ENUM_PF_OPCODE_T {
 	PF_OPCODE_DISABLE,
 	PF_OPCODE_NUM
 } ENUM_PF_OPCODE_T;
+
+enum ENUM_WOW_WAKEUP_REASON {
+	ENUM_PF_CMD_TYPE_MAGIC = 0,
+	ENUM_PF_CMD_TYPE_BITMAP = 1,
+	ENUM_PF_CMD_TYPE_ARPNS = 2,
+	ENUM_PF_CMD_TYPE_GTK_REKEY = 3,
+	ENUM_PF_CMD_TYPE_COALESCING_FILTER = 4,
+	ENUM_PF_CMD_TYPE_HW_GLOBAL_ENABLE = 5,
+	ENUM_PF_CMD_TYPE_TCP_SYN = 6,
+	ENUM_PF_CMD_TYPE_TDLS = 7,
+	ENUM_PF_CMD_TYPE_DISCONNECT = 8,
+	ENUM_PF_CMD_TYPE_IPV4_UDP = 9,
+	ENUM_PF_CMD_TYPE_IPV4_TCP = 10,
+	ENUM_PF_CMD_TYPE_IPV6_UDP = 11,
+	ENUM_PF_CMD_TYPE_IPV6_TCP = 12,
+	ENUM_PF_CMD_TYPE_BEACON_LOST = 13,
+	ENUM_PF_CMD_TYPE_UNDEFINED = 255,
+};
 
 typedef struct _CMD_PACKET_FILTER_CAP_T {
 	UINT_8			ucCmd;
@@ -2921,6 +2944,48 @@ typedef struct _EVENT_NLO_DONE_T {
 	UINT_8 aucReserved[2];
 } EVENT_NLO_DONE_T, *P_EVENT_NLO_DONE_T;
 
+#define SCHED_SCAN_CHANNEL_TYPE_SPECIFIED      (0)
+#define SCHED_SCAN_CHANNEL_TYPE_DUAL_BAND      (1)
+#define SCHED_SCAN_CHANNEL_TYPE_2G4_ONLY       (2)
+#define SCHED_SCAN_CHANNEL_TYPE_5G_ONLY        (3)
+
+struct SSID_MATCH_SETS {
+	INT_32 i4RssiThresold;
+	UINT_8 aucSsid[32];
+	UINT_8 ucSsidLen;
+	UINT_8 aucPadding_1[3];
+};
+
+struct CMD_SCHED_SCAN_REQ_T {
+	UINT_8 ucVersion;
+	UINT_8 ucSeqNum;
+	UINT_8 ucSsidNum;
+	UINT_8 ucMatchSsidNum;
+	UINT_8 ucChannelType;
+	UINT_8 ucChnlNum;
+	UINT_8 ucMspEntryNum;
+	UINT_8 ucPadding_0;
+	UINT_16 u2IELen;
+	PARAM_SSID_T auSsid[10];
+	struct SSID_MATCH_SETS auMatchSsid[16];
+	CHANNEL_INFO_T aucChannel[64];
+	UINT_16 au2MspList[10];
+	/* keep last */
+	UINT_8 aucIE[0];             /* MUST be the last for IE content */
+};
+
+struct CMD_SCAN_SCHED_CANCEL_T {
+	UINT_8 ucSeqNum;
+	UINT_8 ucStatus;
+	UINT_8 aucReserved[2];
+};
+
+struct EVENT_SCHED_SCAN_DONE_T {
+	UINT_8 ucSeqNum;
+	UINT_8 ucStatus;
+	UINT_8 aucReserved[2];
+};
+
 typedef struct _CMD_HIF_CTRL_T {
 	UINT_8 ucHifType;
 	UINT_8 ucHifDirection;
@@ -3044,6 +3109,11 @@ typedef struct _EVENT_STA_STATISTICS_T {
 	BOOLEAN fgIsForceSeOff;
 	UINT_8 aucReserved[21];
 } EVENT_STA_STATISTICS_T, *P_EVENT_STA_STATISTICS_T;
+
+struct EVENT_TEMPERATURE_T {
+	UINT_8 ucTemperature;
+	UINT_8 aucReserved[3];
+};
 
 #if CFG_AUTO_CHANNEL_SEL_SUPPORT
 typedef struct _EVENT_LTE_SAFE_CHN_T {
@@ -3330,6 +3400,9 @@ VOID nicCmdEventBuildDateCode(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInf
 
 VOID nicCmdEventQueryStaStatistics(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInfo, IN PUINT_8 pucEventBuf);
 
+VOID nicCmdEventQueryTemperature(IN P_ADAPTER_T prAdapter,
+	IN P_CMD_INFO_T prCmdInfo, IN PUINT_8 pucEventBuf);
+
 #if CFG_AUTO_CHANNEL_SEL_SUPPORT
 /* 4 Auto Channel Selection */
 VOID nicCmdEventQueryLteSafeChn(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInfo, IN PUINT_8 pucEventBuf);
@@ -3374,6 +3447,7 @@ VOID nicEventLayer0ExtMagic(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 VOID nicEventMicErrorInfo(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent);
 VOID nicEventScanDone(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent);
 VOID nicEventNloDone(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent);
+VOID nicEventSchedScanDone(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent);
 VOID nicEventSleepyNotify(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent);
 VOID nicEventBtOverWifi(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent);
 VOID nicEventStatistics(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent);
@@ -3418,6 +3492,10 @@ VOID nicEventGetGtkDataSync(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 VOID nicCmdEventGetTxPwrTbl(IN P_ADAPTER_T prAdapter,
 			    IN P_CMD_INFO_T prCmdInfo,
 			    IN PUINT_8 pucEventBuf);
+
+VOID nicEventGetTemperature(IN P_ADAPTER_T prAdapter,
+			    IN P_WIFI_EVENT_T prEvent);
+
 
 /*******************************************************************************
 *                              F U N C T I O N S

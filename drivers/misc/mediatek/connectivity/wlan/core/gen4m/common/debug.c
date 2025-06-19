@@ -640,8 +640,16 @@ uint32_t wlanDbgGetLogLevelImpl(IN struct ADAPTER *prAdapter,
 void wlanDbgSetLogLevelImpl(IN struct ADAPTER *prAdapter,
 		uint32_t u4Version, uint32_t u4Module, uint32_t u4level)
 {
+	wlanDbgSetLogLevel(prAdapter, u4Version, u4Module, u4level, FALSE);
+}
+
+void wlanDbgSetLogLevel(IN struct ADAPTER *prAdapter,
+		uint32_t u4Version, uint32_t u4Module,
+		uint32_t u4level, u_int8_t fgEarlySet)
+{
 	uint32_t u4DriverLevel = ENUM_WIFI_LOG_LEVEL_DEFAULT;
 	uint32_t u4FwLevel = ENUM_WIFI_LOG_LEVEL_DEFAULT;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 
 	if (u4level >= ENUM_WIFI_LOG_LEVEL_NUM)
 		return;
@@ -668,13 +676,23 @@ void wlanDbgSetLogLevelImpl(IN struct ADAPTER *prAdapter,
 		case ENUM_WIFI_LOG_MODULE_FW:
 		{
 			struct CMD_EVENT_LOG_UI_INFO cmd;
+			prAdapter->fgSetLogLevel = false;
 
 			kalMemZero(&cmd,
 					sizeof(struct CMD_EVENT_LOG_UI_INFO));
 			cmd.ucVersion = u4Version;
 			cmd.ucLogLevel = u4level;
 
-			wlanSendSetQueryCmd(prAdapter,
+			if (fgEarlySet) {
+				/* Set during wifi on flow */
+				rStatus = wlanSendFwLogControlCmd(prAdapter,
+					CMD_ID_LOG_UI_INFO,
+					nicCmdEventSetCommon,
+					nicOidCmdTimeoutCommon,
+					sizeof(struct CMD_EVENT_LOG_UI_INFO),
+					(uint8_t *)&cmd);
+			} else {
+				rStatus = wlanSendSetQueryCmd(prAdapter,
 					CMD_ID_LOG_UI_INFO,
 					TRUE,
 					FALSE,
@@ -685,6 +703,12 @@ void wlanDbgSetLogLevelImpl(IN struct ADAPTER *prAdapter,
 					(uint8_t *)&cmd,
 					NULL,
 					0);
+			}
+
+			if (rStatus != WLAN_STATUS_FAILURE)
+				prAdapter->fgSetLogLevel = true;
+			else
+				DBGLOG(INIT, INFO, "Log level setting fail!\n");
 		}
 			break;
 		default:
@@ -787,14 +811,14 @@ firmwareHexDump(const uint8_t *pucPreFix,
 
 		switch (i4PreFixType) {
 		case DUMP_PREFIX_ADDRESS:
-			pr_debug("%s%p: %s\n",
+			pr_info("%s%p: %s\n",
 				pucPreFix, pucPtr + i, ucLineBuf);
 			break;
 		case DUMP_PREFIX_OFFSET:
-			pr_debug("%s%.8x: %s\n", pucPreFix, i, ucLineBuf);
+			pr_info("%s%.8x: %s\n", pucPreFix, i, ucLineBuf);
 			break;
 		default:
-			pr_debug("%s%s\n", pucPreFix, ucLineBuf);
+			pr_info("%s%s\n", pucPreFix, ucLineBuf);
 			break;
 		}
 	}
@@ -811,7 +835,7 @@ void wlanPrintFwLog(uint8_t *pucLogContent,
 #undef KBUILD_MODNAME
 #undef LOG_FUNC
 #define KBUILD_MODNAME "wlan_mt6632_fw"
-#define LOG_FUNC pr_debug
+#define LOG_FUNC pr_info
 #define DBG_LOG_BUF_SIZE 128
 
 	int8_t aucLogBuffer[DBG_LOG_BUF_SIZE];
@@ -835,6 +859,20 @@ void wlanPrintFwLog(uint8_t *pucLogContent,
 			*(pucChr - 1) = '\0';
 
 		LOG_FUNC("<FW>%s\n", pucLogContent);
+#ifdef OPLUS_FEATURE_CONN_POWER_MONITOR
+		//add for mtk connectivity power monitor
+		if (0 == kalStrnCmp(pucLogContent, "PWR RATIO-1", kalStrLen("PWR RATIO-1"))) {
+			pucChr = kalStrChr(pucLogContent, ':');
+			if (pucChr != NULL) {
+				*pucChr = '=';
+				kalSendUevent(pucLogContent);
+			} else {
+				if (kalStrChr(pucLogContent, '=') != NULL) {
+					kalSendUevent(pucLogContent);
+				}
+			}
+		}
+#endif /* OPLUS_FEATURE_CONN_POWER_MONITOR */
 	}
 	break;
 	case DEBUG_MSG_TYPE_DRIVER:
@@ -883,7 +921,7 @@ void wlanFillTimestamp(struct ADAPTER *prAdapter, void *pvPacket,
 	uint8_t *pucEth = NULL;
 	uint32_t u4Length = 0;
 	uint8_t *pucUdp = NULL;
-	struct timeval tval;
+	struct timespec64 tval;
 
 	if (!prAdapter || !prAdapter->rDebugInfo.fgVoE5_7Test || !skb)
 		return;
@@ -898,7 +936,7 @@ void wlanFillTimestamp(struct ADAPTER *prAdapter, void *pvPacket,
 	pucUdp = &pucEth[ETH_HLEN+28];
 	if (kalStrnCmp(pucUdp, "1345678", 7))
 		return;
-	do_gettimeofday(&tval);
+	ktime_get_ts64(&tval);
 	switch (ucPhase) {
 	case PHASE_XMIT_RCV: /* xmit */
 		pucUdp += 20;
@@ -911,6 +949,6 @@ void wlanFillTimestamp(struct ADAPTER *prAdapter, void *pvPacket,
 		break;
 	}
 	wlanSetBE32(tval.tv_sec, pucUdp);
-	wlanSetBE32(tval.tv_usec, pucUdp+4);
+	wlanSetBE32(NSEC_TO_USEC(tval.tv_nsec), pucUdp+4);
 }
 /* End: Functions used to breakdown packet jitter, for test case VoE 5.7 */

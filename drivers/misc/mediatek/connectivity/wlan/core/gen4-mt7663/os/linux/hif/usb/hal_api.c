@@ -1056,11 +1056,23 @@ void halRxUSBReceiveEventComplete(struct urb *urb)
 
 uint32_t halRxUSBReceiveData(IN struct ADAPTER *prAdapter)
 {
-	struct GLUE_INFO *prGlueInfo = prAdapter->prGlueInfo;
-	struct GL_HIF_INFO *prHifInfo = &prGlueInfo->rHifInfo;
+	struct GLUE_INFO *prGlueInfo;
+	struct GL_HIF_INFO *prHifInfo;
 	struct USB_REQ *prUsbReq;
 	uint32_t u4Status = WLAN_STATUS_SUCCESS;
 	int ret;
+
+	if (!prAdapter) {
+		DBGLOG(INIT, WARN, "Adapter NULL\n");
+		return WLAN_STATUS_FAILURE;
+	}
+	prGlueInfo = prAdapter->prGlueInfo;
+
+	if (!prGlueInfo) {
+		DBGLOG(INIT, WARN, "prGlueInfo NULL\n");
+		return WLAN_STATUS_FAILURE;
+	}
+	prHifInfo = &prGlueInfo->rHifInfo;
 
 	while (1) {
 		prUsbReq = glUsbDequeueReq(prHifInfo, &prHifInfo->rRxDataFreeQ, &prHifInfo->rRxDataQLock);

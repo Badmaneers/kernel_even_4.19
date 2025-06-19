@@ -175,6 +175,14 @@ void wnmSendBTMResponseFrame(IN struct ADAPTER *prAdapter,
 			 IN struct STA_RECORD *prStaRec);
 
 uint8_t wnmGetBtmToken(void);
+#if IS_ENABLED(CFG_AP_80211V_SUPPORT)
+void wnmSendBTMRequestFrame(IN struct ADAPTER *prAdapter,
+			  IN struct STA_RECORD *prStaRec,
+			  struct PARAM_CUSTOM_BTM_REQ_STRUCT *prSetBtmReqInfo);
+
+void wnmRecvBTMResponse(IN struct ADAPTER *prAdapter,
+	IN struct SW_RFB *prSwRfb);
+#endif /* CFG_AP_80211V_SUPPORT */
 
 /*******************************************************************************
  *                              F U N C T I O N S

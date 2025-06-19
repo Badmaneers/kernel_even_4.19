@@ -57,6 +57,12 @@ extern u8 btmtk_log_lvl;
 	do {if (btmtk_log_lvl >= BTMTK_LOG_LEVEL_DEBUG)		\
 		pr_info("[btmtk_debug] %s: "fmt"\n", __func__, ##__VA_ARGS__); } while (0)
 
+#define BTMTK_WARN_LIMITTED(fmt, ...)     \
+	do {												\
+		/* remove for alps check service */						\
+	} while (0)
+
+
 #define BTMTK_MAX_LOG_LEN		64	/* default length setting */
 
 #define BTSDIO_INFO_RAW(p, l, fmt, ...)								\
@@ -167,8 +173,6 @@ do {												\
  * stpbt device node
  */
 #define BUFFER_SIZE	(1024 * 4)	/* Size of RX Queue */
-#define IOC_MAGIC	0xb0
-#define IOCTL_FW_ASSERT _IOWR(IOC_MAGIC, 0, void *)
 
 /**
  * fw log queue count

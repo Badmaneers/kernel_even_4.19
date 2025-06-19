@@ -105,7 +105,8 @@
 *                    E X T E R N A L   R E F E R E N C E S
 ********************************************************************************
 */
-extern int wlanHardStartXmit(struct sk_buff *prSkb, struct net_device *prDev);
+extern netdev_tx_t
+wlanHardStartXmit(struct sk_buff *prSkb, struct net_device *prDev);
 
 /*******************************************************************************
 *                              C O N S T A N T S
@@ -244,7 +245,7 @@ typedef enum _ENUM_TDLS_LINK_OPER {
 typedef struct _TDLS_CMD_LINK_OPER_T {
 
 	UINT_8 aucPeerMac[6];
-	enum nl80211_tdls_operation oper;
+	ENUM_TDLS_LINK_OPER oper;
 } TDLS_CMD_LINK_OPER_T;
 
 typedef struct _TDLS_CMD_LINK_MGT_T {

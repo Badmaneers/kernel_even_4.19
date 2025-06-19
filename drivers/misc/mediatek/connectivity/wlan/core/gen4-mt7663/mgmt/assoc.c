@@ -144,7 +144,9 @@ struct APPEND_VAR_IE_ENTRY txAssocReqIETable[] = {
 #endif
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL, rsnGenerateWPAIE}
 	,			/* 221 */
+	{0, rsnCalRSNXELen, rsnGenerateRSNXE} /* 244 */
 #if CFG_SUPPORT_OWE
+	,
 	{0, rsnCalOweIELen, rsnGenerateOWEIE} /* 255 */
 #endif
 };
@@ -160,6 +162,11 @@ struct APPEND_VAR_IE_ENTRY txAssocRespIETable[] = {
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_HT_CAP), NULL, rlmRspGenerateHtCapIE}
 	,			/* 45 */
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_HT_OP), NULL, rlmRspGenerateHtOpIE}
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+	,			/* 70 */
+	{(ELEM_HDR_LEN + ELEM_MAX_LEN_RRM_CAP),
+		NULL, rlmGenerateApRRMEnabledCapIE}
+#endif /* CFG_AP_80211K_SUPPORT */
 	,			/* 61 */
 #if CFG_ENABLE_WIFI_DIRECT
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_OBSS_SCAN), NULL,

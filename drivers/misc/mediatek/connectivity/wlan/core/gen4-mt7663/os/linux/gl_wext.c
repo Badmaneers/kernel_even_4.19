@@ -257,6 +257,9 @@ static const iw_handler rIwPrivHandler[] = {
 #endif
 	[IOCTL_SET_INTS - SIOCIWFIRSTPRIV] = priv_set_ints,
 	[IOCTL_GET_INTS - SIOCIWFIRSTPRIV] = priv_get_ints,
+#if CFG_SUPPORT_WAC
+	[IOCTL_SET_DRIVER - SIOCIWFIRSTPRIV] = priv_set_struct,
+#endif
 	[IOCTL_GET_DRIVER - SIOCIWFIRSTPRIV] = priv_set_driver,
 	[IOC_AP_GET_STA_LIST - SIOCIWFIRSTPRIV] = priv_set_ap,
 	[IOC_AP_SET_MAC_FLTR - SIOCIWFIRSTPRIV] = priv_set_ap,
@@ -453,11 +456,13 @@ static const iw_handler mtk_std_handler[] = {
 
 const struct iw_handler_def wext_handler_def = {
 	.num_standard = 0,
+#if defined(CONFIG_WEXT_PRIV) || LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)
 	.num_private = (__u16) sizeof(rIwPrivHandler) / sizeof(iw_handler),
 	.num_private_args = (__u16) sizeof(rIwPrivTable) /
 						sizeof(struct iw_priv_args),
 	.private = rIwPrivHandler,
 	.private_args = rIwPrivTable,
+#endif /* CONFIG_WEXT_PRIV || LINUX_VERSION_CODE <= 2.6.32 */
 	.get_wireless_stats = wext_get_wireless_stats,
 	.num_standard = (__u16) sizeof(mtk_std_handler) / sizeof(iw_handler),
 	.standard = (iw_handler *) mtk_std_handler,
@@ -4083,7 +4088,8 @@ int wext_support_ioctl(IN struct net_device *prDev,
 			ret = -ENOMEM;
 			break;
 		}
-
+		/*Mem reset prExtraBuf*/
+		kalMemZero(prExtraBuf, IW_ESSID_MAX_SIZE + 1);
 		/* iwr->u.essid.length is updated by wext_get_essid() */
 
 		ret = wext_get_essid(prDev, NULL, &iwr->u.essid,
@@ -4588,6 +4594,7 @@ wext_indicate_wext_event(IN struct GLUE_INFO *prGlueInfo,
 
 			rPmkidCand.flags = prPmkidCand->u4Flags;
 			rPmkidCand.index = 0;
+			rPmkidCand.bssid.sa_family = AF_UNSPEC;
 			kalMemCopy(rPmkidCand.bssid.sa_data,
 				   prPmkidCand->arBSSID, 6);
 

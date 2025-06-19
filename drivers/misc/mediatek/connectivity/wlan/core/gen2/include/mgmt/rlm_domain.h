@@ -35,7 +35,7 @@
 
 /* ISO/IEC 3166-1 two-character country codes */
 
-#define COUNTRY_CODE_AD (((UINT_16) 'A' << 8) | (UINT_16) 'D')	/* Andorra                             */
+#define COUNTRY_CODE_AD (((UINT_16) 'A' << 8) | (UINT_16) 'D')	/* Andorra			       */
 #define COUNTRY_CODE_AE (((UINT_16) 'A' << 8) | (UINT_16) 'E')	/* UAE                                 */
 #define COUNTRY_CODE_AF (((UINT_16) 'A' << 8) | (UINT_16) 'F')	/* Afghanistan                         */
 #define COUNTRY_CODE_AG (((UINT_16) 'A' << 8) | (UINT_16) 'G')	/* Antigua & Barbuda                   */
@@ -44,11 +44,13 @@
 #define COUNTRY_CODE_AM (((UINT_16) 'A' << 8) | (UINT_16) 'M')	/* Armenia                             */
 #define COUNTRY_CODE_AN (((UINT_16) 'A' << 8) | (UINT_16) 'N')	/* Netherlands Antilles                */
 #define COUNTRY_CODE_AO (((UINT_16) 'A' << 8) | (UINT_16) 'O')	/* Angola                              */
+#define COUNTRY_CODE_AQ (((UINT_16) 'A' << 8) | (UINT_16) 'Q')	/* South Pole			       */
 #define COUNTRY_CODE_AR (((UINT_16) 'A' << 8) | (UINT_16) 'R')	/* Argentina                           */
 #define COUNTRY_CODE_AS (((UINT_16) 'A' << 8) | (UINT_16) 'S')	/* American Samoa (USA)                */
 #define COUNTRY_CODE_AT (((UINT_16) 'A' << 8) | (UINT_16) 'T')	/* Austria                             */
 #define COUNTRY_CODE_AU (((UINT_16) 'A' << 8) | (UINT_16) 'U')	/* Australia                           */
 #define COUNTRY_CODE_AW (((UINT_16) 'A' << 8) | (UINT_16) 'W')	/* Aruba                               */
+#define COUNTRY_CODE_AX (((UINT_16) 'A' << 8) | (UINT_16) 'X')	/* Aland Islands		       */
 #define COUNTRY_CODE_AZ (((UINT_16) 'A' << 8) | (UINT_16) 'Z')	/* Azerbaijan                          */
 #define COUNTRY_CODE_BA (((UINT_16) 'B' << 8) | (UINT_16) 'A')	/* Bosnia and Herzegovina              */
 #define COUNTRY_CODE_BB (((UINT_16) 'B' << 8) | (UINT_16) 'B')	/* Barbados                            */
@@ -65,10 +67,12 @@
 #define COUNTRY_CODE_BR (((UINT_16) 'B' << 8) | (UINT_16) 'R')	/* Brazil                              */
 #define COUNTRY_CODE_BS (((UINT_16) 'B' << 8) | (UINT_16) 'S')	/* Bahamas                             */
 #define COUNTRY_CODE_BT (((UINT_16) 'B' << 8) | (UINT_16) 'T')	/* Bhutan                              */
+#define COUNTRY_CODE_BV (((UINT_16) 'B' << 8) | (UINT_16) 'V')	/* Bouvet Island		       */
 #define COUNTRY_CODE_BW (((UINT_16) 'B' << 8) | (UINT_16) 'W')	/* Botswana                            */
 #define COUNTRY_CODE_BY (((UINT_16) 'B' << 8) | (UINT_16) 'Y')	/* Belarus                             */
 #define COUNTRY_CODE_BZ (((UINT_16) 'B' << 8) | (UINT_16) 'Z')	/* Belize                              */
 #define COUNTRY_CODE_CA (((UINT_16) 'C' << 8) | (UINT_16) 'A')	/* Canada                              */
+#define COUNTRY_CODE_CC (((UINT_16) 'C' << 8) | (UINT_16) 'C')	/* Cocos Islands		       */
 #define COUNTRY_CODE_CD (((UINT_16) 'C' << 8) | (UINT_16) 'D')	/* Congo. Democratic Republic of the   */
 #define COUNTRY_CODE_CF (((UINT_16) 'C' << 8) | (UINT_16) 'F')	/* Central African Republic            */
 #define COUNTRY_CODE_CG (((UINT_16) 'C' << 8) | (UINT_16) 'G')	/* Congo. Republic of the              */
@@ -114,16 +118,19 @@
 #define COUNTRY_CODE_GG (((UINT_16) 'G' << 8) | (UINT_16) 'G')	/* Guernsey                            */
 #define COUNTRY_CODE_GH (((UINT_16) 'G' << 8) | (UINT_16) 'H')	/* Ghana                               */
 #define COUNTRY_CODE_GI (((UINT_16) 'G' << 8) | (UINT_16) 'I')	/* Gibraltar                           */
+#define COUNTRY_CODE_GL (((UINT_16) 'G' << 8) | (UINT_16) 'L')	/* Greenland			       */
 #define COUNTRY_CODE_GM (((UINT_16) 'G' << 8) | (UINT_16) 'M')	/* Gambia                              */
 #define COUNTRY_CODE_GN (((UINT_16) 'G' << 8) | (UINT_16) 'N')	/* Guinea                              */
 #define COUNTRY_CODE_GP (((UINT_16) 'G' << 8) | (UINT_16) 'P')	/* Guadeloupe                          */
 #define COUNTRY_CODE_GQ (((UINT_16) 'G' << 8) | (UINT_16) 'Q')	/* Equatorial Guinea                   */
 #define COUNTRY_CODE_GR (((UINT_16) 'G' << 8) | (UINT_16) 'R')	/* Greece                              */
+#define COUNTRY_CODE_GS (((UINT_16) 'G' << 8) | (UINT_16) 'S')	/* South Georgia and the South Sandwich Islands */
 #define COUNTRY_CODE_GT (((UINT_16) 'G' << 8) | (UINT_16) 'T')	/* Guatemala                           */
 #define COUNTRY_CODE_GU (((UINT_16) 'G' << 8) | (UINT_16) 'U')	/* Guam                                */
 #define COUNTRY_CODE_GW (((UINT_16) 'G' << 8) | (UINT_16) 'W')	/* Guinea-Bissau                       */
 #define COUNTRY_CODE_GY (((UINT_16) 'G' << 8) | (UINT_16) 'Y')	/* Guyana                              */
 #define COUNTRY_CODE_HK (((UINT_16) 'H' << 8) | (UINT_16) 'K')	/* Hong Kong                           */
+#define COUNTRY_CODE_HM (((UINT_16) 'H' << 8) | (UINT_16) 'M')	/* Heard and McDonald Islands	       */
 #define COUNTRY_CODE_HN (((UINT_16) 'H' << 8) | (UINT_16) 'N')	/* Honduras                            */
 #define COUNTRY_CODE_HR (((UINT_16) 'H' << 8) | (UINT_16) 'R')	/* Croatia                             */
 #define COUNTRY_CODE_HT (((UINT_16) 'H' << 8) | (UINT_16) 'T')	/* Haiti                               */
@@ -133,6 +140,7 @@
 #define COUNTRY_CODE_IL (((UINT_16) 'I' << 8) | (UINT_16) 'L')	/* Israel                              */
 #define COUNTRY_CODE_IM (((UINT_16) 'I' << 8) | (UINT_16) 'M')	/* Isle of Man                         */
 #define COUNTRY_CODE_IN (((UINT_16) 'I' << 8) | (UINT_16) 'N')	/* India                               */
+#define COUNTRY_CODE_IO (((UINT_16) 'I' << 8) | (UINT_16) 'O')	/* British Indian Ocean Territory      */
 #define COUNTRY_CODE_IQ (((UINT_16) 'I' << 8) | (UINT_16) 'Q')	/* Iraq                                */
 #define COUNTRY_CODE_IR (((UINT_16) 'I' << 8) | (UINT_16) 'R')	/* Iran                                */
 #define COUNTRY_CODE_IS (((UINT_16) 'I' << 8) | (UINT_16) 'S')	/* Iceland                             */
@@ -232,7 +240,9 @@
 #define COUNTRY_CODE_SD (((UINT_16) 'S' << 8) | (UINT_16) 'D')	/* Sudan                               */
 #define COUNTRY_CODE_SE (((UINT_16) 'S' << 8) | (UINT_16) 'E')	/* Sweden                              */
 #define COUNTRY_CODE_SG (((UINT_16) 'S' << 8) | (UINT_16) 'G')	/* Singapole                           */
+#define COUNTRY_CODE_SH (((UINT_16) 'S' << 8) | (UINT_16) 'H')	/* Saint Helena			       */
 #define COUNTRY_CODE_SI (((UINT_16) 'S' << 8) | (UINT_16) 'I')	/* Slovenia                            */
+#define COUNTRY_CODE_SJ (((UINT_16) 'S' << 8) | (UINT_16) 'J')	/* Svalbard and Jan Mayen	       */
 #define COUNTRY_CODE_SK (((UINT_16) 'S' << 8) | (UINT_16) 'K')	/* Slovakia                            */
 #define COUNTRY_CODE_SL (((UINT_16) 'S' << 8) | (UINT_16) 'L')	/* Sierra Leone                        */
 #define COUNTRY_CODE_SM (((UINT_16) 'S' << 8) | (UINT_16) 'M')	/* San Marino                          */
@@ -242,6 +252,7 @@
 #define COUNTRY_CODE_SS (((UINT_16) 'S' << 8) | (UINT_16) 'S')	/* South_Sudan                         */
 #define COUNTRY_CODE_ST (((UINT_16) 'S' << 8) | (UINT_16) 'T')	/* Sao Tome and Principe               */
 #define COUNTRY_CODE_SV (((UINT_16) 'S' << 8) | (UINT_16) 'V')	/* El Salvador                         */
+#define COUNTRY_CODE_SX (((UINT_16) 'S' << 8) | (UINT_16) 'X')	/* Sint Maarten			       */
 #define COUNTRY_CODE_SY (((UINT_16) 'S' << 8) | (UINT_16) 'Y')	/* Syria                               */
 #define COUNTRY_CODE_SZ (((UINT_16) 'S' << 8) | (UINT_16) 'Z')	/* Swaziland                           */
 #define COUNTRY_CODE_TC (((UINT_16) 'T' << 8) | (UINT_16) 'C')	/* Turks and Caicos Islands (UK)       */
@@ -250,6 +261,7 @@
 #define COUNTRY_CODE_TG (((UINT_16) 'T' << 8) | (UINT_16) 'G')	/* Togo                                */
 #define COUNTRY_CODE_TH (((UINT_16) 'T' << 8) | (UINT_16) 'H')	/* Thailand                            */
 #define COUNTRY_CODE_TJ (((UINT_16) 'T' << 8) | (UINT_16) 'J')	/* Tajikistan                          */
+#define COUNTRY_CODE_TK (((UINT_16) 'T' << 8) | (UINT_16) 'K')	/* Tokelau			       */
 #define COUNTRY_CODE_TL (((UINT_16) 'T' << 8) | (UINT_16) 'L')	/* East Timor                          */
 #define COUNTRY_CODE_TM (((UINT_16) 'T' << 8) | (UINT_16) 'M')	/* Turkmenistan                        */
 #define COUNTRY_CODE_TN (((UINT_16) 'T' << 8) | (UINT_16) 'N')	/* Tunisia                             */
@@ -261,6 +273,7 @@
 #define COUNTRY_CODE_TZ (((UINT_16) 'T' << 8) | (UINT_16) 'Z')	/* Tanzania                            */
 #define COUNTRY_CODE_UA (((UINT_16) 'U' << 8) | (UINT_16) 'A')	/* Ukraine                             */
 #define COUNTRY_CODE_UG (((UINT_16) 'U' << 8) | (UINT_16) 'G')	/* Ugnada                              */
+#define COUNTRY_CODE_UM (((UINT_16) 'U' << 8) | (UINT_16) 'M')	/* United States Minor Outlying Islands */
 #define COUNTRY_CODE_US (((UINT_16) 'U' << 8) | (UINT_16) 'S')	/* US                                  */
 #define COUNTRY_CODE_UY (((UINT_16) 'U' << 8) | (UINT_16) 'Y')	/* Uruguay                             */
 #define COUNTRY_CODE_UZ (((UINT_16) 'U' << 8) | (UINT_16) 'Z')	/* Uzbekistan                          */
@@ -271,15 +284,15 @@
 #define COUNTRY_CODE_VI (((UINT_16) 'V' << 8) | (UINT_16) 'I')	/* US Virgin Islands                   */
 #define COUNTRY_CODE_VN (((UINT_16) 'V' << 8) | (UINT_16) 'N')	/* Vietnam                             */
 #define COUNTRY_CODE_VU (((UINT_16) 'V' << 8) | (UINT_16) 'U')	/* Vanuatu                             */
+#define COUNTRY_CODE_WF (((UINT_16) 'W' << 8) | (UINT_16) 'F')	/* Walis and Futuna		       */
 #define COUNTRY_CODE_WS (((UINT_16) 'W' << 8) | (UINT_16) 'S')	/* Samoa                               */
+#define COUNTRY_CODE_XK (((UINT_16) 'X' << 8) | (UINT_16) 'K')	/* Republic of Kosovo		       */
 #define COUNTRY_CODE_YE (((UINT_16) 'Y' << 8) | (UINT_16) 'E')	/* Yemen                               */
 #define COUNTRY_CODE_YT (((UINT_16) 'Y' << 8) | (UINT_16) 'T')	/* Mayotte (France)                    */
 #define COUNTRY_CODE_ZA (((UINT_16) 'Z' << 8) | (UINT_16) 'A')	/* South Africa                        */
 #define COUNTRY_CODE_ZM (((UINT_16) 'Z' << 8) | (UINT_16) 'M')	/* Zambia                              */
 #define COUNTRY_CODE_ZW (((UINT_16) 'Z' << 8) | (UINT_16) 'W')	/* Zimbabwe                            */
-
 #define COUNTRY_CODE_DF (((UINT_16) 'D' << 8) | (UINT_16) 'F')	/* Default country domain              */
-
 #ifdef CONFIG_MTK_TC1_FEATURE
 #define COUNTRY_CODE_UDF (((UINT_16) 'D' << 8) | (UINT_16) 'C') /*
 								 * Default Country Code, for User
@@ -293,7 +306,6 @@
 #endif
 #define COUNTRY_CODE_FF (((UINT_16) 'F' << 8) | (UINT_16) 'F')	/* enable open for all channel for Certification */
 #define COUNTRY_CODE_FE (((UINT_16) 'F' << 8) | (UINT_16) 'E')	/* disable open for all channel for Certification */
-
 /* dot11RegDomainsSupportValue */
 #define MIB_REG_DOMAIN_FCC              0x10	/* FCC (US) */
 #define MIB_REG_DOMAIN_IC               0x20	/* IC or DOC (Canada) */

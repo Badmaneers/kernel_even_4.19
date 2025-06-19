@@ -328,6 +328,9 @@ struct P2P_ROLE_FSM_INFO {
 	/* Scan related. */
 	struct P2P_SCAN_REQ_INFO rScanReqInfo;
 
+	/* Auto channel selection related. */
+	struct P2P_ACS_REQ_INFO rAcsReqInfo;
+
 	/* FSM Timer */
 	struct TIMER rP2pRoleFsmTimeoutTimer;
 
@@ -477,6 +480,8 @@ void p2pRoleFsmNotifyEapolTxStatus(IN struct ADAPTER *prAdapter,
 		IN enum ENUM_EAPOL_KEY_TYPE_T rEapolKeyType,
 		IN enum ENUM_TX_RESULT_CODE rTxDoneStatus);
 
+void p2pRoleFsmRunEventAcs(IN struct ADAPTER *prAdapter,
+		IN struct MSG_HDR *prMsgHdr);
 #endif
 
 void p2pProcessPreSuspendFlow(IN struct ADAPTER *prAdapter);

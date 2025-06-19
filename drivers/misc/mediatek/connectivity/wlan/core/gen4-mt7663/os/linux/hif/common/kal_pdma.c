@@ -708,9 +708,15 @@ static bool kalDevKickMsduData(struct GLUE_INFO *prGlueInfo)
 
 	return fgRet;
 }
-
-static int kalAmsduTxDCmp(void *prPriv, struct list_head *prList1,
-			  struct list_head *prList2)
+#if KERNEL_VERSION(5, 13, 0) <= LINUX_VERSION_CODE
+static int kalAmsduTxDCmp(void *prPriv,
+		const struct list_head *prList1,
+		const struct list_head *prList2)
+#else
+static int kalAmsduTxDCmp(void *prPriv,
+		struct list_head *prList1,
+		struct list_head *prList2)
+#endif
 {
 	struct TX_DATA_REQ *prTxReq1, *prTxReq2;
 	struct sk_buff *prSkb1, *prSkb2;

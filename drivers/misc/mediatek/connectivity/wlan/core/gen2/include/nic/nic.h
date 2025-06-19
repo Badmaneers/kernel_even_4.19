@@ -229,7 +229,7 @@ WLAN_STATUS nicEnterCtiaMode(IN P_ADAPTER_T prAdapter, BOOLEAN fgEnterCtia, BOOL
 /*----------------------------------------------------------------------------*/
 /* Scan Result Processing                                                     */
 /*----------------------------------------------------------------------------*/
-UINT_32
+VOID
 nicAddScanResult(IN P_ADAPTER_T prAdapter,
 		 IN PARAM_MAC_ADDRESS rMacAddr,
 		 IN P_PARAM_SSID_T prSsid,

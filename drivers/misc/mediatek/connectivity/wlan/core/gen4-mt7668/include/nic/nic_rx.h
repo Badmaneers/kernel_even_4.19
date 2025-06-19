@@ -150,9 +150,11 @@
 /* DW 1 */
 /* Byte 0 */
 #define RX_STATUS_HTC                   BIT(0)
-#define RX_STATUS_UC2ME                 BIT(1)
-#define RX_STATUS_MC_FRAME              BIT(2)
-#define RX_STATUS_BC_FRAME              BIT(3)
+#define RX_STATUS_UC2ME                 1
+#define RX_STATUS_MC_FRAME              2
+#define RX_STATUS_BC_FRAME              3
+#define RX_STATUS_A1_TYPE_MASK          BITS(1, 2)
+#define RX_STATUS_A1_TYPE_OFFSET        1
 #define RX_STATUS_BCN_WITH_BMC          BIT(4)
 #define RX_STATUS_BCN_WITH_UC           BIT(5)
 #define RX_STATUS_KEYID_MASK            BITS(6, 7)
@@ -690,6 +692,7 @@ struct _SW_RFB_T {
 	PVOID pvHeader;
 	UINT_16 u2PacketLen;
 	UINT_16 u2HeaderLen;
+	UINT_8 ucHeaderOffset;
 
 	PUINT_8 pucPayload;
 	UINT_16 u2PayloadLength;
@@ -697,6 +700,8 @@ struct _SW_RFB_T {
 	P_STA_RECORD_T prStaRec;
 
 	UINT_8 ucPacketType;
+	UINT_8 ucPayloadFormat;
+	UINT_8 ucSecMode;
 
 	/* rx sta record */
 	UINT_8 ucWlanIdx;
@@ -705,6 +710,9 @@ struct _SW_RFB_T {
 	BOOLEAN fgReorderBuffer;
 	BOOLEAN fgDataFrame;
 	BOOLEAN fgFragFrame;
+	UINT_8 fgHdrTran;
+	UINT_8 fgIsBC;
+	UINT_8 fgIsMC;
 	/* duplicate detection */
 	UINT_16 u2FrameCtrl;
 	UINT_16 u2SequenceControl;
@@ -776,6 +784,11 @@ typedef struct _EMU_MAC_RATE_INFO_T {
 	UINT_32 u4PhyRate[4][2];
 } EMU_MAC_RATE_INFO_T, *P_EMU_MAC_RATE_INFO_T;
 
+struct ACTION_FRAME_SIZE_MAP {
+	uint16_t u2Index; /* High byte for Action, low byte for Category */
+	size_t len;
+};
+
 /*******************************************************************************
 *                           P R I V A T E   D A T A
 ********************************************************************************
@@ -828,9 +841,15 @@ typedef struct _EMU_MAC_RATE_INFO_T {
 
 /* DW 1 */
 #define HAL_RX_STATUS_IS_HTC_EXIST(_prHwMacRxDesc)        (((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_HTC)?TRUE:FALSE)
-#define HAL_RX_STATUS_IS_UC2ME(_prHwMacRxDesc)        (((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_UC2ME)?TRUE:FALSE)
-#define HAL_RX_STATUS_IS_MC(_prHwMacRxDesc)        (((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_MC_FRAME)?TRUE:FALSE)
-#define HAL_RX_STATUS_IS_BC(_prHwMacRxDesc)        (((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_BC_FRAME)?TRUE:FALSE)
+#define HAL_RX_STATUS_IS_U2ME(_prHwMacRxDesc)  \
+	((((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_A1_TYPE_MASK)  \
+		>> RX_STATUS_A1_TYPE_OFFSET == RX_STATUS_UC2ME) ? TRUE:FALSE)
+#define HAL_RX_STATUS_IS_MC(_prHwMacRxDesc)  \
+	((((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_A1_TYPE_MASK)  \
+		>> RX_STATUS_A1_TYPE_OFFSET == RX_STATUS_MC_FRAME) ? TRUE:FALSE)
+#define HAL_RX_STATUS_IS_BC(_prHwMacRxDesc)  \
+	((((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_A1_TYPE_MASK)  \
+		>> RX_STATUS_A1_TYPE_OFFSET == RX_STATUS_BC_FRAME) ? TRUE:FALSE)
 #define HAL_RX_STATUS_IS_BCN_WITH_BMC(_prHwMacRxDesc)	\
 	(((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_BCN_WITH_BMC)?TRUE:FALSE)
 #define HAL_RX_STATUS_IS_BCN_WITH_UC(_prHwMacRxDesc)	\
@@ -977,6 +996,17 @@ typedef struct _EMU_MAC_RATE_INFO_T {
 #define RXM_IS_QOS_DATA_FRAME(_u2FrameCtrl) \
 	(((_u2FrameCtrl & MASK_FRAME_TYPE) == MAC_FRAME_QOS_DATA) ? TRUE : FALSE)
 
+#define RXM_IS_TO_DS(_u2FrameCtrl) \
+	(((_u2FrameCtrl & MASK_TO_DS_FROM_DS) == MASK_FC_TO_DS) ? TRUE : FALSE)
+
+#define RXM_IS_FROM_DS(_u2FrameCtrl) \
+	(((_u2FrameCtrl & MASK_TO_DS_FROM_DS) == MASK_FC_FROM_DS) ? \
+	TRUE : FALSE)
+
+#define RXM_IS_MORE_DATA(_u2FrameCtrl) \
+	(((_u2FrameCtrl & MASK_FC_MORE_DATA) == MASK_FC_MORE_DATA) ? \
+	TRUE : FALSE)
+
 /*******************************************************************************
 *                   F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
@@ -1003,6 +1033,8 @@ VOID nicRxProcessForwardPkt(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb);
 VOID nicRxProcessGOBroadcastPkt(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb);
 
 VOID nicRxFillRFB(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb);
+
+void nicRxClearFrag(IN P_ADAPTER_T prAdapter,  IN P_STA_RECORD_T prStaRec);
 
 P_SW_RFB_T incRxDefragMPDU(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSWRfb, OUT P_QUE_T prReturnedQue);
 

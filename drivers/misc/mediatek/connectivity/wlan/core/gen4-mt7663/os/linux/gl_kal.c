@@ -955,7 +955,7 @@ uint32_t kalRxIndicatePkts(IN struct GLUE_INFO *prGlueInfo,
 		kalRxIndicateOnePkt(prGlueInfo, apvPkts[ucIdx]);
 
 	KAL_WAKE_LOCK_TIMEOUT(prGlueInfo->prAdapter,
-		&prGlueInfo->rTimeoutWakeLock, MSEC_TO_JIFFIES(
+		prGlueInfo->prTimeoutWakeLock, MSEC_TO_JIFFIES(
 		prGlueInfo->prAdapter->rWifiVar.u4WakeLockRxTimeout));
 
 	return WLAN_STATUS_SUCCESS;
@@ -1225,16 +1225,20 @@ kalIndicateStatusAndComplete(IN struct GLUE_INFO
 
 #else
 		do {
+
+			uint8_t aucSsid[PARAM_MAX_LEN_SSID + 1] = {0};
+
 			/* print message on console */
 			wlanQueryInformation(prGlueInfo->prAdapter,
 			     wlanoidQuerySsid, &ssid, sizeof(ssid), &bufLen);
 
-			ssid.aucSsid[(ssid.u4SsidLen >= PARAM_MAX_LEN_SSID) ?
-			    (PARAM_MAX_LEN_SSID - 1) : ssid.u4SsidLen] = '\0';
+			kalStrnCpy(aucSsid, ssid.aucSsid, sizeof(aucSsid));
+			aucSsid[sizeof(aucSsid) - 1] = '\0';
+
 			DBGLOG(INIT, INFO,
 				"[wifi] %s netif_carrier_on [ssid:%s " MACSTR
 				"], Mac:" MACSTR "\n",
-				prGlueInfo->prDevHandler->name, ssid.aucSsid,
+				prGlueInfo->prDevHandler->name, aucSsid,
 				MAC2STR(arBssid),
 				MAC2STR(
 				prGlueInfo->prAdapter->rWifiVar.aucMacAddress));
@@ -1812,6 +1816,143 @@ u_int8_t kalIsPairwiseEapolPacket(IN void *prPacket)
 	return FALSE;
 }
 
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+uint32_t
+kalSwTsoXmit(struct sk_buff **pprOrgSkb,
+		 IN struct net_device *prDev, struct GLUE_INFO *prGlueInfo,
+		 uint8_t ucBssIndex)
+{
+	uint32_t u4TotalLen, u4DataLeft, u4HdrLen;
+	struct tso_t rTso;
+	struct sk_buff *prNskb;
+	struct mt66xx_chip_info *prChipInfo;
+	uint32_t u4TxHeadRoomSize;
+	struct sk_buff *prOrgSkb = *pprOrgSkb;
+
+	if (!prOrgSkb || !prGlueInfo) {
+		DBGLOG(TX, ERROR, "Invalid resource %p %p\n"
+			, prOrgSkb
+			, prGlueInfo);
+		return WLAN_STATUS_NOT_ACCEPTED;
+	}
+
+	if (!skb_is_gso(prOrgSkb)) {
+		/* If this skb is nonlinear
+		 * 1. Try to linearize
+		 * 2. Try to alloc/copy new one
+		 */
+		if (skb_is_nonlinear(prOrgSkb)
+			&& skb_linearize(prOrgSkb) < 0) {
+			prNskb = skb_copy(prOrgSkb, KAL_GFP_FLAG());
+
+			dev_kfree_skb(prOrgSkb);
+			if (prNskb) {
+				/* Handle new skb in caller */
+				*pprOrgSkb = prNskb;
+				return WLAN_STATUS_NOT_ACCEPTED;
+			}
+
+			/* TODO: any way for nonlinear? */
+			DBGLOG(INIT, ERROR, "Skb drop\n");
+			return WLAN_STATUS_SUCCESS;
+		}
+
+		/* Clear cache-SKBs under low Tput status */
+		if (skb_queue_len(&prGlueInfo->prAdapter->rTsoQueue) &&
+			!kalIsTputMode(prGlueInfo->prAdapter,
+				PKT_PATH_TX, ucBssIndex))
+			nicTxSwTsoClearSkbQ(prGlueInfo->prAdapter);
+
+		return WLAN_STATUS_NOT_ACCEPTED;
+	}
+
+	prChipInfo = prGlueInfo->prAdapter->chip_info;
+	u4TxHeadRoomSize = NIC_TX_DESC_AND_PADDING_LENGTH +
+			   prChipInfo->txd_append_size;
+
+	/* Initialize the TSO handler, and prepare the first payload */
+	tso_start(prOrgSkb, &rTso);
+
+	u4HdrLen = skb_transport_offset(prOrgSkb) + tcp_hdrlen(prOrgSkb);
+	u4TotalLen = prOrgSkb->len - u4HdrLen;
+	while (u4TotalLen > 0) {
+		uint8_t *pucRecvBuff;
+
+		if (skb_queue_len(&prGlueInfo->prAdapter->rTsoQueue)) {
+			prNskb = skb_dequeue(&prGlueInfo->prAdapter->rTsoQueue);
+			if (!prNskb) {
+				DBGLOG(INIT, ERROR, "reuse skb null\n");
+				break;
+			}
+			if (skb_headroom(prNskb) < u4TxHeadRoomSize)
+				prNskb->data += u4TxHeadRoomSize;
+		} else {
+			uint32_t u4PktMax;
+
+			u4PktMax = max((uint32_t)ETHER_MAX_PKT_SZ,
+				(uint32_t)skb_shinfo(prOrgSkb)->gso_size);
+			prNskb = kalPacketAlloc(prGlueInfo,
+					u4PktMax + u4TxHeadRoomSize,
+					&pucRecvBuff);
+			if (!prNskb) {
+				DBGLOG(INIT, ERROR, "new skb null\n");
+				break;
+			}
+			GLUE_SET_PKT_FLAG(prNskb, ENUM_PKT_TSO);
+			GLUE_INC_REF_CNT(prGlueInfo->prAdapter->u4TsoQueueCnt);
+		}
+
+		/* Config/Reset SKB */
+		/* Force assign CSUM offload */
+		prNskb->ip_summed = CHECKSUM_PARTIAL;
+		prNskb->dev = prOrgSkb->dev;
+		/* Due to SKB may be reused, reset hdr for next ops */
+		pskb_trim(prNskb, 0);
+		skb_copy_queue_mapping(prNskb, prOrgSkb);
+		skb_reset_mac_len(prNskb);
+		skb_set_network_header(prNskb,
+			skb_network_offset(prOrgSkb));
+		skb_set_transport_header(prNskb,
+			skb_transport_offset(prOrgSkb));
+
+		u4DataLeft = min_t(int, skb_shinfo(prOrgSkb)->gso_size,
+			u4TotalLen);
+		u4TotalLen -= u4DataLeft;
+
+		/* prepare packet headers: MAC + IP + TCP */
+		tso_build_hdr(prOrgSkb, prNskb->data, &rTso,
+			u4DataLeft, u4TotalLen == 0);
+		__skb_put(prNskb, u4HdrLen);
+
+		while (u4DataLeft > 0) {
+			uint32_t u4Size;
+
+			u4Size = min_t(int, rTso.size, u4DataLeft);
+
+			kalMemCopy(prNskb->data + prNskb->len,
+				rTso.data, u4Size);
+
+			__skb_put(prNskb, u4Size);
+
+			u4DataLeft -= u4Size;
+
+			/* Config rTSO for next data section */
+			tso_build_data(prOrgSkb, &rTso, u4Size);
+		}
+#if KERNEL_VERSION(3, 18, 0) <= LINUX_VERSION_CODE
+		prNskb->xmit_more = (u4TotalLen != 0);
+#endif
+		skb_shinfo(prNskb)->gso_size = 0;
+
+		kalHardStartXmit(prNskb,
+			prDev, prGlueInfo,
+			ucBssIndex);
+	}
+	dev_kfree_skb(prOrgSkb);
+	return WLAN_STATUS_SUCCESS;
+}
+#endif
+
 /*----------------------------------------------------------------------------*/
 /*
  * \brief This function is TX entry point of NET DEVICE.
@@ -1835,14 +1976,33 @@ kalHardStartXmit(struct sk_buff *prOrgSkb,
 	struct sk_buff *prSkbNew = NULL;
 	struct sk_buff *prSkb = NULL;
 	uint32_t u4SkbLen = 0;
+	struct mt66xx_chip_info *prChipInfo;
+	uint32_t u4TxHeadRoomSize = 0;
+	struct ADAPTER *prAdapter = NULL;
+
 
 	ASSERT(prOrgSkb);
 	ASSERT(prGlueInfo);
+
+	prAdapter = prGlueInfo->prAdapter;
+	prChipInfo = prGlueInfo->prAdapter->chip_info;
+	u4TxHeadRoomSize = NIC_TX_DESC_AND_PADDING_LENGTH +
+		prChipInfo->txd_append_size;
 
 	if (prGlueInfo->ulFlag & GLUE_FLAG_HALT) {
 		DBGLOG(INIT, INFO, "GLUE_FLAG_HALT skip tx\n");
 		dev_kfree_skb(prOrgSkb);
 		return WLAN_STATUS_ADAPTER_NOT_READY;
+	}
+
+	if ((GET_BSS_INFO_BY_INDEX(prGlueInfo->prAdapter, ucBssIndex)
+			->eNetworkType == NETWORK_TYPE_AIS) &&
+		(GET_BSS_INFO_BY_INDEX(prGlueInfo->prAdapter, ucBssIndex)
+			->eConnectionState != PARAM_MEDIA_STATE_CONNECTED)) {
+		DBGLOG(INIT, INFO,
+			"ais status is not connected, skip this frame\n");
+		dev_kfree_skb(prOrgSkb);
+		return WLAN_STATUS_NOT_ACCEPTED;
 	}
 
 	if (prGlueInfo->prAdapter->fgIsEnableLpdvt) {
@@ -1851,15 +2011,21 @@ kalHardStartXmit(struct sk_buff *prOrgSkb,
 		return WLAN_STATUS_NOT_ACCEPTED;
 	}
 
-	if (skb_headroom(prOrgSkb) < NIC_TX_HEAD_ROOM) {
+	if (skb_headroom(prOrgSkb) < u4TxHeadRoomSize) {
 		/*
 		 * Should not happen
 		 * kernel crash may happen as skb shared info
 		 * channged.
 		 * offer an change for lucky anyway
 		 */
-		prSkbNew = skb_realloc_headroom(prOrgSkb, NIC_TX_HEAD_ROOM);
-		ASSERT(prSkbNew);
+		prSkbNew = skb_realloc_headroom(prOrgSkb, u4TxHeadRoomSize);
+		if (!prSkbNew) {
+			dev_kfree_skb(prOrgSkb);
+			DBGLOG(INIT, ERROR,
+				"prChipInfo = %pM, u4TxHeadRoomSize: %u\n",
+				prChipInfo, u4TxHeadRoomSize);
+			return WLAN_STATUS_NOT_ACCEPTED;
+		}
 		dev_kfree_skb(prOrgSkb);
 		prSkb = prSkbNew;
 	} else
@@ -1896,6 +2062,14 @@ kalHardStartXmit(struct sk_buff *prOrgSkb,
 		return WLAN_STATUS_INVALID_PACKET;
 	}
 
+#if CFG_SUPPORT_TPENHANCE_MODE
+	if (!wlanTpeProcess(prGlueInfo,
+			prSkb,
+			prDev)) {
+		return WLAN_STATUS_SUCCESS;
+	}
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
+
 	if (!HAL_IS_TX_DIRECT(prGlueInfo->prAdapter)) {
 		GLUE_SPIN_LOCK_DECLARATION();
 
@@ -1914,7 +2088,7 @@ kalHardStartXmit(struct sk_buff *prOrgSkb,
 	    prGlueInfo->prAdapter->rWifiVar.u4NetifStopTh) {
 		netif_stop_subqueue(prDev, u2QueueIdx);
 
-		DBGLOG(TX, INFO,
+		DBGLOG_LIMITED(TX, INFO,
 		       "Stop subqueue for BSS[%u] QIDX[%u] PKT_LEN[%u] TOT_CNT[%d] PER-Q_CNT[%d]\n",
 		       ucBssIndex, u2QueueIdx, u4SkbLen,
 		       GLUE_GET_REF_CNT(prGlueInfo->i4TxPendingFrameNum),
@@ -2115,6 +2289,12 @@ void kalSendCompleteAndAwakeQueue(IN struct GLUE_INFO
 	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 #endif
 
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+		if (GLUE_TEST_PKT_FLAG(pvPacket, ENUM_PKT_TSO)) {
+			skb_queue_tail(&prGlueInfo->prAdapter->rTsoQueue,
+				(struct sk_buff *)pvPacket);
+		} else
+#endif
 	dev_kfree_skb_any((struct sk_buff *)pvPacket);
 
 	DBGLOG(TX, LOUD, "----- pending frame %d -----\n",
@@ -2247,32 +2427,18 @@ kalIPv4FrameClassifier(IN struct GLUE_INFO *prGlueInfo,
 				"<TX> DNS: [0x%p] IPID[0x%02x] TransID[0x%04x] SeqNo[%d]\n",
 				prPacket, u2IpId, u2TransId, ucSeqNo);
 			prTxPktInfo->u2Flag |= BIT(ENUM_PKT_DNS);
-		} else if ((u2DstPort == IP_PORT_MDNS)
-					|| (u2DstPort == IP_PORT_MDNS)) {
+		}
+#if (CFG_SUPPORT_MDNS_OFFLOAD && CFG_SUPPORT_MDNS_OFFLOAD_GVA)
+		else if (u2DstPort == UDP_PORT_MDNS) {
 			uint8_t *pucMdnsHdr = NULL;
-			struct MDNS_RESP_INFO_T *respInfo;
 
 			if (!prGlueInfo->prAdapter->mdns_offload_enable)
 				return TRUE;
 
-			respInfo = (struct MDNS_RESP_INFO_T *)kalMemAlloc(
-					sizeof(struct MDNS_RESP_INFO_T),
-					PHY_MEM_TYPE);
-			if (respInfo == NULL)
-				return TRUE;
-
-			kalMemZero(respInfo, sizeof(struct MDNS_RESP_INFO_T));
 			pucMdnsHdr = &pucIpHdr[IPV4_HDR_LEN + UDP_HDR_LEN];
-			if (kalParseMdnsRespPkt(pucMdnsHdr, respInfo)
-						== TRUE) {
-				if (respInfo->ptrInfo.ttl != 0)
-					kalAddMdnsCache(respInfo);
-				else
-					kalDelMdnsCache(respInfo);
-			}
-			kalMemFree(respInfo, PHY_MEM_TYPE,
-				sizeof(struct MDNS_RESP_INFO_T));
+			kalProcessMdnsRespPkt(prGlueInfo, pucMdnsHdr);
 		}
+#endif
 	} else if (ucIpProto == IP_PRO_ICMP) {
 		/* the number of ICMP packets is seldom so we print log here */
 		uint16_t u2IpId =
@@ -2293,6 +2459,15 @@ kalIPv4FrameClassifier(IN struct GLUE_INFO *prGlueInfo,
 			"<TX> ICMP: IPID[0x%04x] Type %d, Id 0x%04x, Seq BE 0x%04x, SeqNo: %d\n",
 			u2IpId, ucIcmpType, u2IcmpId, u2IcmpSeq, ucSeqNo);
 		prTxPktInfo->u2Flag |= BIT(ENUM_PKT_ICMP);
+	} else if (ucIpProto == IP_PRO_TCP) {
+		uint8_t *pucTcpHdr;
+
+		pucTcpHdr = &pucIpHdr[IPV4_HDR_LEN];
+
+#if CFG_SUPPORT_TPENHANCE_MODE
+		if (pucTcpHdr[TCP_HDR_FLAG_OFFSET] & TCP_HDR_FLAG_ACK_BIT)
+			GLUE_SET_PKT_FLAG(prPacket, ENUM_PKT_TCP_ACK);
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
 	}
 	return TRUE;
 }
@@ -2817,15 +2992,23 @@ kalIoctl(IN struct GLUE_INFO *prGlueInfo,
 	/* <6> Check if we use the command queue */
 	prIoReq->u4Flag = fgCmd;
 
-	/* <7> schedule the OID bit */
+	/* <7> schedule the OID bit
+	 * Use memory barrier to ensure OidEntry is written done and then set
+	 * bit.
+	 */
+	smp_mb();
 	set_bit(GLUE_FLAG_OID_BIT, &prGlueInfo->ulFlag);
 
 	/* <7.1> Hold wakelock to ensure OS won't be suspended */
 	KAL_WAKE_LOCK_TIMEOUT(prGlueInfo->prAdapter,
-		&prGlueInfo->rTimeoutWakeLock, MSEC_TO_JIFFIES(
+		prGlueInfo->prTimeoutWakeLock, MSEC_TO_JIFFIES(
 		prGlueInfo->prAdapter->rWifiVar.u4WakeLockThreadWakeup));
 
-	/* <8> Wake up tx thread to handle kick start the I/O request */
+	/* <8> Wake up main thread to handle kick start the I/O request.
+	 * Use memory barrier to ensure set bit is done and then wake up main
+	 * thread.
+	 */
+	smp_mb();
 	wake_up_interruptible(&prGlueInfo->waitq);
 
 	/* <9> Block and wait for event or timeout,
@@ -3355,6 +3538,91 @@ void kalProcessTxReq(struct GLUE_INFO *prGlueInfo,
 }
 
 #if CFG_SUPPORT_MULTITHREAD
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+/*----------------------------------------------------------------------------*/
+/*!
+ * @brief
+ *
+ * @param data       data pointer to private data of hif_thread
+ *
+ * @retval           If the function succeeds, the return value is 0.
+ * Otherwise, an error code is returned.
+ *
+ */
+/*----------------------------------------------------------------------------*/
+int sdio_rx_DeAgg_thread(void *data)
+{
+	int ret;
+	struct net_device *dev = data;
+	struct GLUE_INFO *prGlueInfo = *((struct GLUE_INFO **)
+					 netdev_priv(dev));
+	struct GL_HIF_INFO *prHifInfo;
+	struct ADAPTER *prAdapter;
+	struct SDIO_RX_COALESCING_BUF *prRxBuf;
+	struct RX_CTRL *prRxCtrl;
+
+	kal_Set_Thread_SchPolicy_Priority(prGlueInfo);
+
+	DBGLOG(INIT, INFO, "%s:%u starts running...\n",
+		KAL_GET_CURRENT_THREAD_NAME(),
+		KAL_GET_CURRENT_THREAD_ID());
+
+	while (TRUE) {
+		if (prGlueInfo->ulFlag & GLUE_FLAG_HALT) {
+			DBGLOG(INIT, ERROR,
+				"%s:%u should stop now...\n",
+				KAL_GET_CURRENT_THREAD_NAME(),
+				KAL_GET_CURRENT_THREAD_ID());
+			break;
+		}
+		do {
+			ret = wait_event_interruptible(
+					prGlueInfo->waitq_rxDeAgg,
+					((prGlueInfo->ulFlag &
+					GLUE_FLAG_RX_DE_AGG_PROCESS) != 0));
+		} while (ret != 0);
+		if (test_and_clear_bit(GLUE_FLAG_RX_DE_AGG_IN_THREAD_BIT,
+			&prGlueInfo->ulFlag)) {
+			if (g_u4HaltFlag)
+				break;
+
+			prHifInfo = &prGlueInfo->rHifInfo;
+			prAdapter = prGlueInfo->prAdapter;
+
+			if (prGlueInfo->ulFlag & GLUE_FLAG_HALT)
+				break;
+
+			prRxCtrl = &prAdapter->rRxCtrl;
+			prHifInfo = &prAdapter->prGlueInfo->rHifInfo;
+
+			mutex_lock(&prHifInfo->rRxDeAggQueMutex);
+
+			QUEUE_REMOVE_HEAD(&prHifInfo->rRxDeAggQueue,
+				prRxBuf,
+				struct SDIO_RX_COALESCING_BUF *);
+			mutex_unlock(&prHifInfo->rRxDeAggQueMutex);
+			while (prRxBuf) {
+				HAL_DE_AGG_RX_PKTPROC(prAdapter, prRxBuf);
+
+				if (prGlueInfo->ulFlag & GLUE_FLAG_HALT)
+					return 0;
+				mutex_lock(&prHifInfo->rRxDeAggQueMutex);
+				QUEUE_REMOVE_HEAD(&prHifInfo->rRxDeAggQueue,
+				prRxBuf, struct SDIO_RX_COALESCING_BUF *);
+				mutex_unlock(&prHifInfo->rRxDeAggQueMutex);
+			}
+		}
+	}
+
+	complete(&prGlueInfo->rxDeAggHaltComp);
+	DBGLOG(INIT, INFO, "%s:%u stopped!\n",
+		   KAL_GET_CURRENT_THREAD_NAME(),
+		   KAL_GET_CURRENT_THREAD_ID());
+
+	return 0;
+}
+#endif
+
 /*----------------------------------------------------------------------------*/
 /*!
  * @brief
@@ -3374,18 +3642,17 @@ int hif_thread(void *data)
 	struct ADAPTER *prAdapter = prGlueInfo->prAdapter;
 	int ret = 0;
 #if CFG_ENABLE_WAKE_LOCK
-	KAL_WAKE_LOCK_T rHifThreadWakeLock;
+	KAL_WAKE_LOCK_T *prHifThreadWakeLock;
 #endif
 
-	KAL_WAKE_LOCK_INIT(prAdapter, &rHifThreadWakeLock, "WLAN hif_thread");
-	KAL_WAKE_LOCK(prAdapter, &rHifThreadWakeLock);
+	KAL_WAKE_LOCK_INIT(prAdapter, prHifThreadWakeLock, "WLAN hif_thread");
+	KAL_WAKE_LOCK(prAdapter, prHifThreadWakeLock);
 
 	DBGLOG(INIT, INFO, "%s:%u starts running...\n",
 	       KAL_GET_CURRENT_THREAD_NAME(), KAL_GET_CURRENT_THREAD_ID());
 
 	prGlueInfo->u4HifThreadPid = KAL_GET_CURRENT_THREAD_ID();
-
-	set_user_nice(current, prAdapter->rWifiVar.cThreadNice);
+	kal_Set_Thread_SchPolicy_Priority(prGlueInfo);
 
 	while (TRUE) {
 
@@ -3400,7 +3667,7 @@ int hif_thread(void *data)
 
 		/* Unlock wakelock if hif_thread going to idle */
 		if (!(prGlueInfo->ulFlag & GLUE_FLAG_HIF_PROCESS))
-			KAL_WAKE_UNLOCK(prAdapter, &rHifThreadWakeLock);
+			KAL_WAKE_UNLOCK(prAdapter, prHifThreadWakeLock);
 
 		/*
 		 * sleep on waitqueue if no events occurred. Event contain
@@ -3414,8 +3681,8 @@ int hif_thread(void *data)
 				!= 0));
 		} while (ret != 0);
 #if CFG_ENABLE_WAKE_LOCK
-		if (!KAL_WAKE_LOCK_ACTIVE(prAdapter, &rHifThreadWakeLock))
-			KAL_WAKE_LOCK(prAdapter, &rHifThreadWakeLock);
+		if (!KAL_WAKE_LOCK_ACTIVE(prAdapter, prHifThreadWakeLock))
+			KAL_WAKE_LOCK(prAdapter, prHifThreadWakeLock);
 #endif
 		if (prAdapter->fgIsFwOwn
 		    && (prGlueInfo->ulFlag == GLUE_FLAG_HIF_FW_OWN)) {
@@ -3495,9 +3762,9 @@ int hif_thread(void *data)
 
 	complete(&prGlueInfo->rHifHaltComp);
 #if CFG_ENABLE_WAKE_LOCK
-	if (KAL_WAKE_LOCK_ACTIVE(prAdapter, &rHifThreadWakeLock))
-		KAL_WAKE_UNLOCK(prAdapter, &rHifThreadWakeLock);
-	KAL_WAKE_LOCK_DESTROY(prAdapter, &rHifThreadWakeLock);
+	if (KAL_WAKE_LOCK_ACTIVE(prAdapter, prHifThreadWakeLock))
+		KAL_WAKE_UNLOCK(prAdapter, prHifThreadWakeLock);
+	KAL_WAKE_LOCK_DESTROY(prAdapter, prHifThreadWakeLock);
 #endif
 
 	DBGLOG(INIT, TRACE, "%s:%u stopped!\n",
@@ -3528,7 +3795,7 @@ int rx_thread(void *data)
 
 	int ret = 0;
 #if CFG_ENABLE_WAKE_LOCK
-	KAL_WAKE_LOCK_T rRxThreadWakeLock;
+	KAL_WAKE_LOCK_T *prRxThreadWakeLock;
 #endif
 	uint32_t u4LoopCount;
 
@@ -3536,16 +3803,15 @@ int rx_thread(void *data)
 	KAL_SPIN_LOCK_DECLARATION();
 
 	KAL_WAKE_LOCK_INIT(prGlueInfo->prAdapter,
-			   &rRxThreadWakeLock, "WLAN rx_thread");
-	KAL_WAKE_LOCK(prGlueInfo->prAdapter, &rRxThreadWakeLock);
+			   prRxThreadWakeLock, "WLAN rx_thread");
+	KAL_WAKE_LOCK(prGlueInfo->prAdapter, prRxThreadWakeLock);
 
 	DBGLOG(INIT, INFO, "%s:%u starts running...\n",
 	       KAL_GET_CURRENT_THREAD_NAME(), KAL_GET_CURRENT_THREAD_ID());
 
 	prGlueInfo->u4RxThreadPid = KAL_GET_CURRENT_THREAD_ID();
+	kal_Set_Thread_SchPolicy_Priority(prGlueInfo);
 
-	set_user_nice(current,
-		      prGlueInfo->prAdapter->rWifiVar.cThreadNice);
 #if CFG_SUPPORT_MTK_CPU_SCHED
 	cpumask_clear_cpu(0, mask);
 	cpumask_set_cpu(1, mask);
@@ -3569,7 +3835,7 @@ int rx_thread(void *data)
 		/* Unlock wakelock if rx_thread going to idle */
 		if (!(prGlueInfo->ulFlag & GLUE_FLAG_RX_PROCESS))
 			KAL_WAKE_UNLOCK(prGlueInfo->prAdapter,
-					&rRxThreadWakeLock);
+					prRxThreadWakeLock);
 
 		/*
 		 * sleep on waitqueue if no events occurred.
@@ -3580,9 +3846,9 @@ int rx_thread(void *data)
 		} while (ret != 0);
 #if CFG_ENABLE_WAKE_LOCK
 		if (!KAL_WAKE_LOCK_ACTIVE(prGlueInfo->prAdapter,
-					  &rRxThreadWakeLock))
+					  prRxThreadWakeLock))
 			KAL_WAKE_LOCK(prGlueInfo->prAdapter,
-				      &rRxThreadWakeLock);
+				      prRxThreadWakeLock);
 #endif
 		if (test_and_clear_bit(GLUE_FLAG_RX_TO_OS_BIT,
 				       &prGlueInfo->ulFlag)) {
@@ -3613,7 +3879,7 @@ int rx_thread(void *data)
 					}
 
 				    KAL_WAKE_LOCK_TIMEOUT(prGlueInfo->prAdapter,
-					&prGlueInfo->rTimeoutWakeLock,
+					prGlueInfo->prTimeoutWakeLock,
 					MSEC_TO_JIFFIES(prGlueInfo->prAdapter
 					->rWifiVar.u4WakeLockRxTimeout));
 				}
@@ -3624,10 +3890,10 @@ int rx_thread(void *data)
 	complete(&prGlueInfo->rRxHaltComp);
 #if CFG_ENABLE_WAKE_LOCK
 	if (KAL_WAKE_LOCK_ACTIVE(prGlueInfo->prAdapter,
-				 &rRxThreadWakeLock))
-		KAL_WAKE_UNLOCK(prGlueInfo->prAdapter, &rRxThreadWakeLock);
+				 prRxThreadWakeLock))
+		KAL_WAKE_UNLOCK(prGlueInfo->prAdapter, prRxThreadWakeLock);
 	KAL_WAKE_LOCK_DESTROY(prGlueInfo->prAdapter,
-			      &rRxThreadWakeLock);
+			      prRxThreadWakeLock);
 #endif
 
 	DBGLOG(INIT, TRACE, "%s:%u stopped!\n",
@@ -3666,7 +3932,7 @@ int main_thread(void *data)
 	int ret = 0;
 	u_int8_t fgNeedHwAccess = FALSE;
 #if CFG_ENABLE_WAKE_LOCK
-	KAL_WAKE_LOCK_T rTxThreadWakeLock;
+	KAL_WAKE_LOCK_T *prTxThreadWakeLock;
 #endif
 
 #if CFG_SUPPORT_MULTITHREAD
@@ -3676,12 +3942,12 @@ int main_thread(void *data)
 	current->flags |= PF_NOFREEZE;
 	ASSERT(prGlueInfo);
 	ASSERT(prGlueInfo->prAdapter);
-	set_user_nice(current,
-		      prGlueInfo->prAdapter->rWifiVar.cThreadNice);
+
+	kal_Set_Thread_SchPolicy_Priority(prGlueInfo);
 
 	KAL_WAKE_LOCK_INIT(prGlueInfo->prAdapter,
-			   &rTxThreadWakeLock, "WLAN main_thread");
-	KAL_WAKE_LOCK(prGlueInfo->prAdapter, &rTxThreadWakeLock);
+			   prTxThreadWakeLock, "WLAN main_thread");
+	KAL_WAKE_LOCK(prGlueInfo->prAdapter, prTxThreadWakeLock);
 
 	DBGLOG(INIT, INFO, "%s:%u starts running...\n",
 	       KAL_GET_CURRENT_THREAD_NAME(), KAL_GET_CURRENT_THREAD_ID());
@@ -3704,7 +3970,7 @@ int main_thread(void *data)
 		/* Unlock wakelock if main_thread going to idle */
 		if (!(prGlueInfo->ulFlag & GLUE_FLAG_MAIN_PROCESS))
 			KAL_WAKE_UNLOCK(prGlueInfo->prAdapter,
-					&rTxThreadWakeLock);
+					prTxThreadWakeLock);
 
 		/*
 		 * sleep on waitqueue if no events occurred. Event contain
@@ -3718,9 +3984,9 @@ int main_thread(void *data)
 		} while (ret != 0);
 #if CFG_ENABLE_WAKE_LOCK
 		if (!KAL_WAKE_LOCK_ACTIVE(prGlueInfo->prAdapter,
-					  &rTxThreadWakeLock))
+					  prTxThreadWakeLock))
 			KAL_WAKE_LOCK(prGlueInfo->prAdapter,
-				      &rTxThreadWakeLock);
+				      prTxThreadWakeLock);
 #endif
 
 #if CFG_ENABLE_WIFI_DIRECT
@@ -3913,10 +4179,10 @@ int main_thread(void *data)
 	complete(&prGlueInfo->rHaltComp);
 #if CFG_ENABLE_WAKE_LOCK
 	if (KAL_WAKE_LOCK_ACTIVE(prGlueInfo->prAdapter,
-				 &rTxThreadWakeLock))
-		KAL_WAKE_UNLOCK(prGlueInfo->prAdapter, &rTxThreadWakeLock);
+				 prTxThreadWakeLock))
+		KAL_WAKE_UNLOCK(prGlueInfo->prAdapter, prTxThreadWakeLock);
 	KAL_WAKE_LOCK_DESTROY(prGlueInfo->prAdapter,
-			      &rTxThreadWakeLock);
+			      prTxThreadWakeLock);
 #endif
 
 	DBGLOG(INIT, TRACE, "%s:%u stopped!\n",
@@ -4533,7 +4799,7 @@ void kalSetEvent(struct GLUE_INFO *pr)
 
 void kalSetIntEvent(struct GLUE_INFO *pr)
 {
-	KAL_WAKE_LOCK(pr->prAdapter, &pr->rIntrWakeLock);
+	KAL_WAKE_LOCK(pr->prAdapter, pr->prIntrWakeLock);
 
 	set_bit(GLUE_FLAG_INT_BIT, &pr->ulFlag);
 
@@ -4559,7 +4825,7 @@ void kalSetTxEvent2Hif(struct GLUE_INFO *pr)
 	if (!pr->hif_thread)
 		return;
 
-	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, &pr->rTimeoutWakeLock,
+	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, pr->prTimeoutWakeLock,
 			      MSEC_TO_JIFFIES(
 			      pr->prAdapter->rWifiVar.u4WakeLockThreadWakeup));
 	set_bit(GLUE_FLAG_HIF_TX_BIT, &pr->ulFlag);
@@ -4571,7 +4837,7 @@ void kalSetFwOwnEvent2Hif(struct GLUE_INFO *pr)
 	if (!pr->hif_thread)
 		return;
 
-	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, &pr->rTimeoutWakeLock,
+	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, pr->prTimeoutWakeLock,
 			      MSEC_TO_JIFFIES(
 			      pr->prAdapter->rWifiVar.u4WakeLockThreadWakeup));
 
@@ -4584,7 +4850,7 @@ void kalSetTxEvent2Rx(struct GLUE_INFO *pr)
 	if (!pr->rx_thread)
 		return;
 
-	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, &pr->rTimeoutWakeLock,
+	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, pr->prTimeoutWakeLock,
 			      MSEC_TO_JIFFIES(
 			      pr->prAdapter->rWifiVar.u4WakeLockThreadWakeup));
 
@@ -4597,7 +4863,7 @@ void kalSetTxCmdEvent2Hif(struct GLUE_INFO *pr)
 	if (!pr->hif_thread)
 		return;
 
-	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, &pr->rTimeoutWakeLock,
+	KAL_WAKE_LOCK_TIMEOUT(pr->prAdapter, pr->prTimeoutWakeLock,
 			      MSEC_TO_JIFFIES(
 			      pr->prAdapter->rWifiVar.u4WakeLockThreadWakeup));
 
@@ -4942,6 +5208,7 @@ struct file *kalFileOpen(const char *path, int flags,
 			 int rights)
 {
 	struct file *filp = NULL;
+#if	(CFG_ENABLE_GKI_SUPPORT != 1)
 	int err = 0;
 
 	filp = filp_open(path, flags, rights);
@@ -4949,18 +5216,22 @@ struct file *kalFileOpen(const char *path, int flags,
 		err = PTR_ERR(filp);
 		return NULL;
 	}
+#endif
 	return filp;
 }
 
 void kalFileClose(struct file *file)
 {
+#if	(CFG_ENABLE_GKI_SUPPORT != 1)
 	filp_close(file, NULL);
+#endif
 }
 
 uint32_t kalFileRead(struct file *file,
 		     unsigned long long offset, unsigned char *data,
 		     unsigned int size)
 {
+#if	(CFG_ENABLE_GKI_SUPPORT != 1)
 #if KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE
 	return kernel_read(file, data, size, &offset);
 #else
@@ -4974,12 +5245,16 @@ uint32_t kalFileRead(struct file *file,
 	set_fs(oldfs);
 	return ret;
 #endif
+#else
+	return 0;
+#endif
 }
 
 uint32_t kalFileWrite(struct file *file,
 		      unsigned long long offset, unsigned char *data,
 		      unsigned int size)
 {
+#if	(CFG_ENABLE_GKI_SUPPORT != 1)
 #if KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE
 	return kernel_write(file, data, size, &offset);
 #else
@@ -4992,6 +5267,9 @@ uint32_t kalFileWrite(struct file *file,
 
 	set_fs(oldfs);
 	return ret;
+#endif
+#else
+	return 0;
 #endif
 }
 
@@ -5602,16 +5880,16 @@ void kalIndicateRxAssocToUpperLayer(struct net_device *prDevHandler,
 			u2FrameLen, bss, CFG80211_RX,
 			MAC_FRAME_ASSOC_RSP);
 #else
-#if (KERNEL_VERSION(3, 18, 0) <= CFG80211_VERSION_CODE)
-	/* [TODO] Set uapsd_queues field to zero first,fill it if needed*/
+#if (KERNEL_VERSION(5, 1, 0) <= CFG80211_VERSION_CODE)
 	cfg80211_rx_assoc_resp(prDevHandler, bss, prAssocRspFrame,
-					u2FrameLen, 0);
-#else
-#if (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
+		u2FrameLen, 0, NULL, 0);
+#elif (KERNEL_VERSION(3, 18, 0) <= CFG80211_VERSION_CODE)
+	/* [TODO] Set uapsd_queues field to zero first,fill it if needed*/
+	cfg80211_rx_assoc_resp(prDevHandler, bss, prAssocRspFrame, u2FrameLen, 0);
+#elif (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
 	cfg80211_rx_assoc_resp(prDevHandler, bss, prAssocRspFrame, u2FrameLen);
 #else
 	cfg80211_send_rx_assoc(prDevHandler, bss, prAssocRspFrame, u2FrameLen);
-#endif
 #endif
 #endif
 }
@@ -5673,7 +5951,11 @@ void kalIndicateTxDeauthToUpperLayer(struct net_device *prDevHandler,
 			CFG80211_TX,
 			MAC_FRAME_DEAUTH);
 #else
-#if (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
+#if KERNEL_VERSION(5, 11, 0) <= CFG80211_VERSION_CODE
+		/* TODO: need quick reconnect here? */
+		cfg80211_tx_mlme_mgmt(prDevHandler, prDeauthFrame,
+			u2FrameLen, FALSE);
+#elif (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
 		cfg80211_tx_mlme_mgmt(prDevHandler, prDeauthFrame, u2FrameLen);
 #else
 		cfg80211_send_deauth(prDevHandler, prDeauthFrame, u2FrameLen);
@@ -5796,7 +6078,16 @@ static void kalProcessCfg80211TxPkt(struct PARAM_CFG80211_REQ *prCfg80211Req)
 	kalAcquireWDevMutex(prCfg80211Req->prDevHandler);
 
 	switch (prCfg80211Req->ucFrameType) {
-#if (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
+#if (KERNEL_VERSION(5, 11, 0) <= CFG80211_VERSION_CODE)
+	case MAC_FRAME_DISASSOC:
+	case MAC_FRAME_DEAUTH:
+		/* TODO: need quick reconnect here? */
+		cfg80211_tx_mlme_mgmt(prCfg80211Req->prDevHandler,
+			(const u8 *)prCfg80211Req->prFrame,
+			prCfg80211Req->frameLen,
+			FALSE);
+		break;
+#elif (KERNEL_VERSION(3, 11, 0) <= CFG80211_VERSION_CODE)
 	case MAC_FRAME_DISASSOC:
 	case MAC_FRAME_DEAUTH:
 		cfg80211_tx_mlme_mgmt(prCfg80211Req->prDevHandler,
@@ -6264,6 +6555,8 @@ u_int8_t kalMetCheckProfilingPacket(IN struct GLUE_INFO
 	return FALSE;
 }
 
+#if	(CFG_ENABLE_GKI_SUPPORT != 1) && \
+	KERNEL_VERSION(5, 7, 0) > LINUX_VERSION_CODE
 static unsigned long __read_mostly tracing_mark_write_addr;
 
 static int __mt_find_tracing_mark_write_symbol_fn(
@@ -6276,12 +6569,15 @@ static int __mt_find_tracing_mark_write_symbol_fn(
 	}
 	return 0;
 }
-
+#endif
 static inline void __mt_update_tracing_mark_write_addr(void)
 {
+#if	(CFG_ENABLE_GKI_SUPPORT != 1) && \
+	KERNEL_VERSION(4, 19, 0) > LINUX_VERSION_CODE
 	if (unlikely(tracing_mark_write_addr == 0))
 		kallsyms_on_each_symbol(
 			__mt_find_tracing_mark_write_symbol_fn, NULL);
+#endif
 }
 
 void kalMetTagPacket(IN struct GLUE_INFO *prGlueInfo,
@@ -6434,12 +6730,13 @@ const struct file_operations rMetProcFops = {
 	.write = kalMetWriteProcfs
 };
 #endif
-const struct file_operations rMetProcCtrlFops = {
-	.write = kalMetCtrlWriteProcfs
+
+DEFINE_PROC_OPS_STRUCT(rMetProcCtrlFops) = {
+	DEFINE_PROC_OPS_WRITE(kalMetCtrlWriteProcfs)
 };
 
-const struct file_operations rMetProcPortFops = {
-	.write = kalMetPortWriteProcfs
+DEFINE_PROC_OPS_STRUCT(rMetProcPortFops) = {
+	DEFINE_PROC_OPS_WRITE(kalMetPortWriteProcfs)
 };
 
 int kalMetInitProcfs(IN struct GLUE_INFO *prGlueInfo)
@@ -6598,11 +6895,32 @@ uint32_t kalCloseCorDumpFile(u_int8_t fgIsN9)
 #if CFG_WOW_SUPPORT
 void kalWowInit(IN struct GLUE_INFO *prGlueInfo)
 {
-	kalMemZero(&prGlueInfo->prAdapter->rWowCtrl.stWowPort,
-		   sizeof(struct WOW_PORT));
-	prGlueInfo->prAdapter->rWowCtrl.ucReason = INVALID_WOW_WAKE_UP_REASON;
+	struct ADAPTER *prAdapter;
 
-	prGlueInfo->prAdapter->mdns_offload_enable = FALSE;
+	if (prGlueInfo == NULL || prGlueInfo->prAdapter == NULL) {
+		DBGLOG(INIT, ERROR, "NULL point unexpected\n");
+		return;
+	}
+
+	prAdapter = prGlueInfo->prAdapter;
+
+	kalMemZero(&prAdapter->rWowCtrl.stWowPort,
+			   sizeof(struct WOW_PORT));
+	prAdapter->rWowCtrl.ucReason = INVALID_WOW_WAKE_UP_REASON;
+
+#if CFG_SUPPORT_MDNS_OFFLOAD
+	prAdapter->mdns_offload_enable = FALSE;
+	/* default wake up host when mdns packet not match */
+#if CFG_SUPPORT_MDNS_OFFLOAD_TV
+	/* for TV, wake up devices when there is no match record */
+	prAdapter->mdns_wake_flag =
+				MDNS_WAKEUP_BY_NO_MATCH_RECORD;
+#else
+	/* for GVA, wake up devices when get a sub mdns query packet*/
+	prAdapter->mdns_wake_flag = MDNS_WAKEUP_BY_SUB_REQ;
+#endif
+		kalMdnsOffloadInit(prAdapter);
+#endif
 }
 
 void kalWowCmdEventSetCb(IN struct ADAPTER *prAdapter,
@@ -6610,7 +6928,6 @@ void kalWowCmdEventSetCb(IN struct ADAPTER *prAdapter,
 {
 	ASSERT(prAdapter);
 	ASSERT(prCmdInfo);
-
 
 	if (prCmdInfo->ucCID == CMD_ID_SET_PF_CAPABILITY) {
 		DBGLOG(INIT, STATE, "CMD_ID_SET_PF_CAPABILITY cmd done\n");
@@ -6648,16 +6965,6 @@ void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 		&& prGlueInfo->prAdapter->rWowCtrl.fgWowEnable == 0)
 		bWake = FALSE;
 
-	/* add mdns offload */
-	if (enable)
-		DBGLOG(PF, STATE, "Suspend: mDNS flag:%d\n",
-			prGlueInfo->prAdapter->mdns_offload_enable);
-
-	if (enable && prGlueInfo->prAdapter->mdns_offload_enable) {
-		kalSendDelMdnsCacheToFw(prGlueInfo);
-		kalSendAddMdnsCacheToFw(prGlueInfo);
-	}
-
 	DBGLOG(PF, INFO,
 	       "PF, pAd ucBssIndex=%d, ucOwnMacIndex=%d\n",
 	       prGlueInfo->prAdapter->prAisBssInfo->ucBssIndex,
@@ -6666,6 +6973,13 @@ void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 	DBGLOG(PF, INFO, "profile wow=%d, bWake=%d, GpioInterval=%d\n",
 	       prGlueInfo->prAdapter->rWifiVar.ucWow, bWake,
 	       prGlueInfo->prAdapter->rWowCtrl.astWakeHif[0].u4GpioInterval);
+
+#if CFG_SUPPORT_MDNS_OFFLOAD
+	if (enable && prGlueInfo->prAdapter->mdns_offload_enable) {
+		kalSendClearRecordToFw(prGlueInfo);
+		kalSendMdnsRecordToFw(prGlueInfo);
+	}
+#endif
 
 /* Add this step in 0x4A wow command, then we can save 0x59 command */
 #if 0
@@ -6765,11 +7079,26 @@ void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 	/* GPIO parameter is necessary in suspend/resume */
 	if (enable == 1) {
 		rCmdWowlanParam.ucCmd = PM_WOWLAN_REQ_START;
-		rCmdWowlanParam.ucDetectType = WOWLAN_DETECT_TYPE_MAGIC;
-		rCmdWowlanParam.u2FilterFlag = WOWLAN_FF_DROP_ALL |
-				       WOWLAN_FF_SEND_MAGIC_TO_HOST |
-				       WOWLAN_FF_ALLOW_1X |
-				       WOWLAN_FF_ALLOW_ARP_REQ2ME;
+		if (!prGlueInfo->prAdapter->rWifiVar.ucMobileLikeSuspend) {
+			rCmdWowlanParam.ucDetectType = WOWLAN_DETECT_TYPE_MAGIC;
+			rCmdWowlanParam.u2FilterFlag = WOWLAN_FF_DROP_ALL |
+					       WOWLAN_FF_SEND_MAGIC_TO_HOST |
+					       WOWLAN_FF_ALLOW_1X |
+					       WOWLAN_FF_ALLOW_ARP_REQ2ME;
+		} else {
+			rCmdWowlanParam.ucDetectType = WOWLAN_DETECT_TYPE_ANY;
+			rCmdWowlanParam.u2FilterFlag = WOWLAN_FF_ALLOW_UC |
+					       WOWLAN_FF_ALLOW_BMC |
+					       WOWLAN_FF_SEND_MAGIC_TO_HOST |
+					       WOWLAN_FF_ALLOW_1X |
+					       WOWLAN_FF_ALLOW_ARP_REQ2ME;
+			DBGLOG(PF, INFO, "Mobile like suspend\n");
+			DBGLOG(PF, INFO,
+				"Wow DetectType[0x%x] FilterFlag[0x%x]\n",
+				rCmdWowlanParam.ucDetectType,
+				rCmdWowlanParam.u2FilterFlag);
+		}
+
 		if (!bWake)
 			rCmdWowlanParam.ucDetectType = WOWLAN_DETECT_TYPE_NONE;
 
@@ -6810,576 +7139,93 @@ void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 
 	/* ARP offload. move to last command */
 	wlanSetSuspendMode(prGlueInfo, enable);
+	/* skip in set_suspend_mode command and move to here */
+	if (prGlueInfo->prAdapter->rWifiVar.ucDisSuspendScrOff) {
+		DBGLOG(INIT, INFO,
+			"Set suspend mode [%u]\n",
+			enable);
+		prGlueInfo->fgIsInSuspendMode = enable;
+		p2pSetSuspendMode(prGlueInfo, enable);
+	}
 
 	wlanSendDummyCmd(prGlueInfo->prAdapter, TRUE);
 
 }
 
-struct MDNS_Template_Record gRspCacheRecord[MAX_MDNS_CACHE_NUM];
-
-uint8_t gOldestIndex;
-
-uint16_t kalMdsnParseName(uint8_t *pucMdnsHdr, uint16_t offset,
-			uint8_t *name, uint16_t *name_len)
+#if CFG_SUPPORT_MDNS_OFFLOAD
+void kalMdnsOffloadInit(IN struct ADAPTER *prAdapter)
 {
-	uint16_t pos = 0;
-	uint16_t i = 0;
-	bool compress = FALSE;
-	uint8_t len = 0;
-	uint8_t limit = MDNS_NAME_MAX_LEN - 1;
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	uint8_t i;
 
-	/* parse compress name */
-	/* there may be compress name contain compress name */
-	pos = offset;
-	while (pucMdnsHdr[offset] != 0) {
-		len = pucMdnsHdr[offset];
-		switch (len & 0xc0) {
-		case 0x00:
-			/* uncompress code */
-			if ((*name_len + len) > limit) {
-				*name_len = 0;
-				return 0;
-			}
+	prMdnsInfo = &prAdapter->rMdnsInfo;
+	LINK_INITIALIZE(&prMdnsInfo->rMdnsRecordFreeList);
+	LINK_INITIALIZE(&prMdnsInfo->rMdnsRecordList);
 
-			for (i = 0; i <= len; i++) {
-				name[*name_len] = pucMdnsHdr[offset + i];
-				*name_len += 1;
-			}
-			offset += len + 1;
-			if (compress == FALSE)
-				pos = offset;
-			break;
-
-		case 0x40:
-		case 0x80:
-			*name_len = 0;
-			return 0;
-
-		case 0xc0:
-			if (compress == FALSE) {
-				pos = offset;
-				compress = TRUE;
-			}
-			DBGLOG(PF, LOUD, "0x%02x 0x%02x.\n",
-				pucMdnsHdr[offset], pucMdnsHdr[offset + 1]);
-			offset = ((pucMdnsHdr[offset] & 0x3f) << 8)
-						| pucMdnsHdr[offset + 1];
-			break;
-		}
+	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
+		prMdnsParamEntry = (struct MDNS_PARAM_ENTRY_T *)
+				(&prMdnsInfo->rMdnsEntry[i]);
+		LINK_INSERT_TAIL(&prMdnsInfo->rMdnsRecordFreeList,
+			&prMdnsParamEntry->rLinkEntry);
 	}
-
-	/* for compress, c0xx 2byes, for uncompress 0 as the end of the name */
-	if (compress == TRUE)
-		pos += 2;
-	else
-		pos += 1;
-
-	*name_len += 1;
-
-	return pos;
 }
 
-bool kalParseMdnsRespPkt(uint8_t *pucMdnsHdr,
-			struct MDNS_RESP_INFO_T *resp)
+struct MDNS_PARAM_ENTRY_T *mdnsAllocateParamEntry(IN struct ADAPTER *prAdapter)
 {
-	uint16_t pos;
-	uint8_t *ip;
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct LINK *prMdnsRecordFreeList;
+	struct LINK *prMdnsRecordList;
 
-	pos = 0;
-	resp->usMdnsId = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->usMdnsFlags = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->usQuestionCnt = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->usAnswerCnt = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->usAuthCnt = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->usAddtionCnt = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	DBGLOG(SW4, LOUD, "MDNS PKT[ID %d] flags[0x%x]\n",
-			resp->usMdnsId, resp->usMdnsFlags);
-	DBGLOG(SW4, LOUD, "questionCnt[%d] answerCnt[%d]\n",
-			resp->usQuestionCnt, resp->usAnswerCnt);
-	DBGLOG(SW4, LOUD, "authcnt[%d] addCnt[%d]\n",
-			resp->usAuthCnt, resp->usAddtionCnt);
-
-	if ((resp->usMdnsFlags & 0x8000) == 0) {
-		DBGLOG(SW4, LOUD, "MDNS is query packet\n");
-		return FALSE;
-	}
-
-	if ((resp->usAnswerCnt == 1 && resp->usAddtionCnt == 3)
-		|| (resp->usAnswerCnt == 4 && resp->usAddtionCnt == 0)) {
-		DBGLOG(SW4, LOUD, "MDNS ans %d add %d\n",
-			resp->usAnswerCnt, resp->usAddtionCnt);
-	} else {
-		DBGLOG(SW4, LOUD, "MDNS ans %d add %d\n",
-			resp->usAnswerCnt, resp->usAddtionCnt);
-		return FALSE;
-	}
-
-	/* parse ptr info */
-	pos += 2;
-	pos = kalMdsnParseName(pucMdnsHdr, pos,
-						resp->ptrInfo.queryName,
-						&resp->ptrInfo.queryNameLen);
-
-	DBGLOG(SW4, LOUD, "qurey name: %s\n",
-			resp->ptrInfo.queryName);
-	DBGLOG(SW4, LOUD, "qurey name len: %d pos %d\n",
-			resp->ptrInfo.queryNameLen, pos);
-
-	resp->ptrInfo.type = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-	if (resp->ptrInfo.type != 12) {
-		DBGLOG(SW4, LOUD, "not ptr type %d\n",
-				resp->ptrInfo.type);
-		return FALSE;
-	}
-
-	pos += 2;
-	resp->ptrInfo.cl = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->ptrInfo.ttl = NTOHL(*(uint32_t *)(pucMdnsHdr + pos));
-
-	pos += 4;
-	resp->ptrInfo.dataLen = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	DBGLOG(SW4, LOUD, "ptr type %d class %d ttl %d datalen %d\n",
-			resp->ptrInfo.type, resp->ptrInfo.cl,
-			resp->ptrInfo.ttl, resp->ptrInfo.dataLen);
-
-	pos += 2;
-	pos = kalMdsnParseName(pucMdnsHdr, pos,
-						resp->ptrInfo.domName,
-						&resp->ptrInfo.domNameLen);
-
-	DBGLOG(SW4, LOUD, "ptr domain name: %s\n", resp->ptrInfo.domName);
-
-	/* parse compress name, need update the datalen */
-	resp->ptrInfo.dataLen = resp->ptrInfo.domNameLen;
-
-	/* parse txt info */
-	pos = kalMdsnParseName(pucMdnsHdr, pos, resp->txtInfo.domName,
-					&resp->txtInfo.domNameLen);
-
-	DBGLOG(SW4, LOUD, "txt domain name: %s\n", resp->txtInfo.domName);
-
-	resp->txtInfo.type = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-	if (resp->txtInfo.type != 16) {
-		DBGLOG(SW4, LOUD, "not txt type %d\n", resp->txtInfo.type);
-		return FALSE;
-	}
-
-	pos += 2;
-	resp->txtInfo.cl = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->txtInfo.ttl = NTOHL(*(uint32_t *)(pucMdnsHdr + pos));
-
-	pos += 4;
-	resp->txtInfo.dataLen = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	DBGLOG(SW4, LOUD, "txt type %d class %d ttl %d datalen %d\n",
-			resp->txtInfo.type, resp->txtInfo.cl,
-			resp->txtInfo.ttl, resp->txtInfo.dataLen);
-
-	pos += 2;
-	kalMemCopy(resp->txtInfo.text,
-				pucMdnsHdr + pos,
-				resp->txtInfo.dataLen);
-
-	DBGLOG(SW4, LOUD, "txt text: %s\n", resp->txtInfo.text);
-
-	/* parse srv info */
-	pos += resp->txtInfo.dataLen;
-	pos = kalMdsnParseName(pucMdnsHdr, pos, resp->srvInfo.domName,
-						&resp->srvInfo.domNameLen);
-
-	DBGLOG(SW4, LOUD, "srv domain name: %s\n", resp->srvInfo.domName);
-
-	resp->srvInfo.type = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-	if (resp->srvInfo.type != 33) {
-		DBGLOG(SW4, LOUD, "not srv type %d\n", resp->srvInfo.type);
-		return FALSE;
-	}
-
-	pos += 2;
-	resp->srvInfo.cl = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->srvInfo.ttl = NTOHL(*(uint32_t *)(pucMdnsHdr + pos));
-
-	pos += 4;
-	resp->srvInfo.dataLen = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->srvInfo.priority = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->srvInfo.weight = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->srvInfo.port = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	DBGLOG(SW4, LOUD, "srv type %d class %d ttl %d datalen %d.\n",
-			resp->srvInfo.type, resp->srvInfo.cl,
-			resp->srvInfo.ttl, resp->srvInfo.dataLen);
-
-	DBGLOG(SW4, LOUD, "srv pri %d weight %d port %d.\n",
-			resp->srvInfo.priority, resp->srvInfo.weight,
-			resp->srvInfo.port);
-
-	pos += 2;
-	pos = kalMdsnParseName(pucMdnsHdr, pos, resp->srvInfo.target,
-					&resp->srvInfo.targetLen);
-
-	DBGLOG(SW4, LOUD, "srv target name: %s\n", resp->srvInfo.target);
-
-	/* parse compress name, need update the datalen */
-	resp->srvInfo.dataLen = 6 + resp->srvInfo.targetLen;
-
-	/* parse a info */
-	pos = kalMdsnParseName(pucMdnsHdr, pos, resp->aInfo.domName,
-						&resp->aInfo.domNameLen);
-
-	DBGLOG(SW4, LOUD, "a domain name: %s.\n", resp->aInfo.domName);
-
-	resp->aInfo.type =  NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-	if (resp->aInfo.type != 1) {
-		DBGLOG(SW4, LOUD, "not a type %d.\n", resp->aInfo.type);
-		return FALSE;
-	}
-
-	pos += 2;
-	resp->aInfo.cl = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->aInfo.ttl = NTOHL(*(uint32_t *)(pucMdnsHdr + pos));
-
-	pos += 4;
-	resp->aInfo.dataLen = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
-
-	pos += 2;
-	resp->aInfo.ipAddr = NTOHL(*(uint32_t *)(pucMdnsHdr + pos));
-
-	DBGLOG(SW4, LOUD, "a type %d class %d ttl %d datalen %d.\n",
-			resp->aInfo.type, resp->aInfo.cl,
-			resp->aInfo.ttl, resp->aInfo.dataLen);
-
-	ip = (uint8_t *)&(resp->aInfo.ipAddr);
-	DBGLOG(SW4, LOUD, "a host ip [%d.%d.%d.%d].\n",
-			ip[0], ip[1], ip[2], ip[3]);
-
-	return TRUE;
-}
-
-void kalPickMdnsParamFromResp(struct MDNS_RESP_INFO_T *respInfo,
-		struct MDNS_Template_Record *respTemplate)
-{
-	uint16_t offset;
-	struct MDNS_ANSWER_RR *prMdnsAnswerR = NULL;
-	struct MDNS_TXT_RR *prMdnsTxtR = NULL;
-	struct MDNS_SRV_RR *prMdnsSrvR = NULL;
-	struct MDNS_QUESTION *prMdnsQuestion = NULL;
-	struct MDNS_A_RR *prMdnsAR = NULL;
-
-	prMdnsQuestion = &respTemplate->mdnsQuestionTemplate;
-
-	/* store query info */
-	kalMemCopy(prMdnsQuestion->name,
-				respInfo->ptrInfo.queryName,
-				MDNS_NAME_MAX_LEN);
-	prMdnsQuestion->name_length = respInfo->ptrInfo.queryNameLen;
-	prMdnsQuestion->type = respInfo->ptrInfo.type;
-	prMdnsQuestion->class = respInfo->ptrInfo.cl;
-
-	/* store answer RR */
-	prMdnsAnswerR = &respTemplate->mdnsResponseRecord;
-	offset = 0;
-	kalMemCopy(&prMdnsAnswerR->data[offset],
-				respInfo->ptrInfo.queryName,
-				respInfo->ptrInfo.queryNameLen);
-
-	offset += respInfo->ptrInfo.queryNameLen;
-	*(uint16_t *)(&prMdnsAnswerR->data[offset])
-					= HTONS(respInfo->ptrInfo.type);
-
-	offset += sizeof(uint16_t);
-	*(uint16_t *)(&prMdnsAnswerR->data[offset])
-					= HTONS(respInfo->ptrInfo.cl);
-
-	offset += sizeof(uint16_t);
-	*(uint32_t *)(&prMdnsAnswerR->data[offset])
-					= HTONL(respInfo->ptrInfo.ttl);
-
-	offset += sizeof(uint32_t);
-	*(uint16_t *)(&prMdnsAnswerR->data[offset])
-					= HTONS(respInfo->ptrInfo.dataLen);
-
-	offset += sizeof(uint16_t);
-	kalMemCopy(&prMdnsAnswerR->data[offset],
-				respInfo->ptrInfo.domName,
-				respInfo->ptrInfo.domNameLen);
-	offset += respInfo->ptrInfo.domNameLen;
-	prMdnsAnswerR->data_length = offset;
-
-	/* store server name (domain name) */
-	kalMemCopy(respTemplate->ucServiceName,
-				respInfo->ptrInfo.domName,
-				respInfo->ptrInfo.domNameLen);
-	respTemplate->ServiceNameLen = respInfo->ptrInfo.domNameLen;
-
-	/* store SRV info */
-	offset = 0;
-	prMdnsSrvR = &respTemplate->mdnsSrvRecord;
-	*(uint16_t *)(&prMdnsSrvR->data[offset])
-					= HTONS(respInfo->srvInfo.type);
-
-	offset += sizeof(uint16_t);
-	*(uint16_t *)(&prMdnsSrvR->data[offset]) = HTONS(respInfo->srvInfo.cl);
-
-	offset += sizeof(uint16_t);
-	*(uint32_t *)(&prMdnsSrvR->data[offset]) = HTONL(respInfo->srvInfo.ttl);
-
-	offset += sizeof(uint32_t);
-	/* use target */
-	*(uint16_t *)(&prMdnsSrvR->data[offset])
-				= HTONS(respInfo->srvInfo.targetLen + 6);
-
-	offset += sizeof(uint16_t);
-	*(uint16_t *)(&prMdnsSrvR->data[offset])
-				= HTONS(respInfo->srvInfo.priority);
-
-	offset += sizeof(uint16_t);
-	*(uint16_t *)(&prMdnsSrvR->data[offset])
-				= HTONS(respInfo->srvInfo.weight);
-
-	offset += sizeof(uint16_t);
-	*(uint16_t *)(&prMdnsSrvR->data[offset])
-				= HTONS(respInfo->srvInfo.port);
-
-	offset += sizeof(uint16_t);
-	prMdnsSrvR->data_length = offset;
-
-	/* store TXT info */
-	offset = 0;
-	prMdnsTxtR = &respTemplate->mdnsTxtRecord;
-	*(uint16_t *)(&prMdnsTxtR->data[offset])
-				= HTONS(respInfo->txtInfo.type);
-
-	offset += sizeof(uint16_t);
-	*(uint16_t *)(&prMdnsTxtR->data[offset]) = HTONS(respInfo->txtInfo.cl);
-
-	offset += sizeof(uint16_t);
-	*(uint32_t *)(&prMdnsTxtR->data[offset]) = HTONL(respInfo->txtInfo.ttl);
-
-	offset += sizeof(uint32_t);
-	*(uint16_t *)(&prMdnsTxtR->data[offset])
-				= HTONS(respInfo->txtInfo.dataLen);
-
-	offset += sizeof(uint16_t);
-	kalMemCopy(&prMdnsTxtR->data[offset],
-				respInfo->txtInfo.text,
-				respInfo->txtInfo.dataLen);
-	offset += respInfo->txtInfo.dataLen;
-	prMdnsTxtR->data_length = offset;
-
-	/* store target name */
-	kalMemCopy(respTemplate->ucTargetName,
-				respInfo->srvInfo.target,
-				respInfo->srvInfo.targetLen);
-	respTemplate->TargetNameLen = respInfo->srvInfo.targetLen;
-
-	/* store A info */
-	offset = 0;
-	prMdnsAR = &respTemplate->mdnsARecord;
-
-	*(uint16_t *)(&prMdnsAR->data[offset])
-				= HTONS(respInfo->aInfo.type);
-
-	offset += sizeof(uint16_t);
-	*(uint16_t *)(&prMdnsAR->data[offset]) = HTONS(respInfo->aInfo.cl);
-
-	offset += sizeof(uint16_t);
-	*(uint32_t *)(&prMdnsAR->data[offset]) = HTONL(respInfo->aInfo.ttl);
-
-	offset += sizeof(uint32_t);
-	*(uint16_t *)(&prMdnsAR->data[offset])
-				= HTONS(respInfo->aInfo.dataLen);
-
-	offset += sizeof(uint16_t);
-	*(uint32_t *)(&prMdnsAR->data[offset]) = HTONL(respInfo->aInfo.ipAddr);
-	offset += respInfo->aInfo.dataLen;
-	prMdnsAR->data_length = offset;
-}
-
-void kalSendMdnsEventCb(IN struct ADAPTER *prAdapter,
-	IN struct CMD_INFO *prCmdInfo, IN uint8_t *pucEventBuf)
-{
 	ASSERT(prAdapter);
-	ASSERT(prCmdInfo);
 
+	prMdnsInfo = &prAdapter->rMdnsInfo;
 
-	if (prCmdInfo->ucCID == CMD_ID_SET_MDNS_RECORD) {
-		DBGLOG(INIT, LOUD, "CMD_ID_SET_MDNS_RECORD cmd submitted\n");
-		prAdapter->fgSetMdnsDone = TRUE;
-	}
-}
+	prMdnsRecordFreeList = &prMdnsInfo->rMdnsRecordFreeList;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
 
-void kalSendDelMdnsCacheToFw(struct GLUE_INFO *prGlueInfo)
-{
-	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
-	uint8_t i;
-	uint32_t wait;
+	LINK_REMOVE_HEAD(prMdnsRecordFreeList, prMdnsParamEntry,
+			struct MDNS_PARAM_ENTRY_T *);
 
-	cmdMdnsParam = (struct CMD_MDNS_PARAM_T *)kalMemAlloc(
-			sizeof(struct CMD_MDNS_PARAM_T), VIR_MEM_TYPE);
-	if (!cmdMdnsParam)
-		return;
-
-	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
-		kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
-
-		cmdMdnsParam->ucCmd = MDNS_CMD_DEL_RECORD;
-		cmdMdnsParam->u4RecordId = i;
-
-		prGlueInfo->prAdapter->fgSetMdnsDone = FALSE;
-
-		wlanSendSetQueryCmd(prGlueInfo->prAdapter,
-				CMD_ID_SET_MDNS_RECORD,
-				TRUE,
-				FALSE,
-				FALSE,
-				kalSendMdnsEventCb,
-				nicOidCmdTimeoutCommon,
-				sizeof(struct CMD_MDNS_PARAM_T),
-				(uint8_t *)cmdMdnsParam,
-				NULL,
-				0);
-
-		wait = 0;
-		while (1) {
-			kalMsleep(2);
-
-			if (wait > 100) {
-				DBGLOG(INIT, ERROR, "WoW process timeout\n\n");
-				break;
-			}
-			if (prGlueInfo->prAdapter->fgSetMdnsDone == TRUE) {
-				DBGLOG(INIT, LOUD,
-					"send mdns record [%d] done\n", i);
-				break;
-			}
-			wait++;
-		}
+	if (!prMdnsParamEntry) {
+		DBGLOG(REQ, INFO,
+			"mdns record buffer is full replace the first one.\n");
+		LINK_REMOVE_HEAD(prMdnsRecordList, prMdnsParamEntry,
+					struct MDNS_PARAM_ENTRY_T *);
 	}
 
-	kalMemFree(cmdMdnsParam, VIR_MEM_TYPE,
-		   sizeof(struct CMD_MDNS_PARAM_T));
-}
+	if (prMdnsParamEntry)
+		kalMemZero(prMdnsParamEntry,
+				sizeof(struct MDNS_PARAM_ENTRY_T));
 
-void kalSendAddMdnsCacheToFw(struct GLUE_INFO *prGlueInfo)
-{
-	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
-	uint8_t i;
-	uint32_t wait;
-
-	cmdMdnsParam = (struct CMD_MDNS_PARAM_T *)kalMemAlloc(
-			sizeof(struct CMD_MDNS_PARAM_T), VIR_MEM_TYPE);
-	if (!cmdMdnsParam)
-		return;
-
-	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
-		if (gRspCacheRecord[i].bIsUsed == 0) {
-			DBGLOG(SW4, LOUD, "null cache, don't send to fw.\n");
-			continue;
-		}
-
-		kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
-
-		prGlueInfo->prAdapter->fgSetMdnsDone = FALSE;
-
-		cmdMdnsParam->ucCmd = MDNS_CMD_ADD_RECORD;
-		cmdMdnsParam->u4RecordId = gRspCacheRecord[i].u4RecordId;
-		kalMemCopy(&cmdMdnsParam->mdnsQueryRespTemplate,
-				&gRspCacheRecord[i],
-				sizeof(struct MDNS_Template_Record));
-		DBGLOG(SW4, STATE, "mDNS cache: %d, recordid %d %s.\n",
-			i, gRspCacheRecord[i].u4RecordId,
-			gRspCacheRecord[i].mdnsQuestionTemplate.name);
-
-		wlanSendSetQueryCmd(prGlueInfo->prAdapter,
-				CMD_ID_SET_MDNS_RECORD,
-				TRUE,
-				FALSE,
-				FALSE,
-				kalSendMdnsEventCb,
-				nicOidCmdTimeoutCommon,
-				sizeof(struct CMD_MDNS_PARAM_T),
-				(uint8_t *)cmdMdnsParam,
-				NULL,
-				0);
-
-		wait = 0;
-		while (1) {
-			kalMsleep(2);
-
-			if (wait > 100) {
-				DBGLOG(INIT, ERROR,
-					"WoW process timeout\n\n");
-				break;
-			}
-			if (prGlueInfo->prAdapter->fgSetMdnsDone == TRUE) {
-				DBGLOG(INIT, LOUD,
-					"send mdns record [%d] done\n", i);
-				break;
-			}
-			wait++;
-		}
-	}
-
-	kalMemFree(cmdMdnsParam, VIR_MEM_TYPE,
-		sizeof(struct CMD_MDNS_PARAM_T));
-}
-
-void kalShowMdnsCache(void)
-{
-	uint8_t i;
-
-	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
-		DBGLOG(SW4, STATE, "mDNS cache: %d, %d [%s] [%s].\n",
-			i, gRspCacheRecord[i].u4RecordId,
-			gRspCacheRecord[i].mdnsQuestionTemplate.name,
-			gRspCacheRecord[i].ucServiceName);
-	}
+	return prMdnsParamEntry;
 }
 
 void kalSendMdnsEnableToFw(struct GLUE_INFO *prGlueInfo)
 {
 	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
-	uint8_t *pucMdnsARecord;
 	struct WLAN_MAC_HEADER_QoS_T *prMacHeader;
-	uint8_t *pucIPHeader;
-	uint8_t *pucUDPHeader;
+	struct iphdr *prIphdr;
+	struct udphdr *prUdphdr;
+	uint32_t u4BufLen = 0;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 
-	cmdMdnsParam = (struct CMD_MDNS_PARAM_T *)kalMemAlloc(
-			sizeof(struct CMD_MDNS_PARAM_T), VIR_MEM_TYPE);
-	if (!cmdMdnsParam)
+	cmdMdnsParam =
+		kalMemAlloc(sizeof(struct CMD_MDNS_PARAM_T), PHY_MEM_TYPE);
+	if (!cmdMdnsParam) {
+		DBGLOG(REQ, WARN, "%s, alloc mem failed\n", __func__);
 		return;
+	}
 
 	kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
 
 	cmdMdnsParam->ucCmd = MDNS_CMD_ENABLE;
 
-	DBGLOG(SW4, ERROR, "mDNS Enable.\n");
+	cmdMdnsParam->ucWakeFlag = prGlueInfo->prAdapter->mdns_wake_flag;
+
+	DBGLOG(SW4, STATE, "mDNS Enable wake flag %u.\n",
+			cmdMdnsParam->ucWakeFlag);
 	/* Store 802.11 MAC header.*/
 
 	prMacHeader = &cmdMdnsParam->aucMdnsMacHdr;
@@ -7404,246 +7250,451 @@ void kalSendMdnsEnableToFw(struct GLUE_INFO *prGlueInfo)
 					(ACK_POLICY_NORMAL_ACK_IMPLICIT_BA_REQ
 					<< MASK_QC_ACK_POLICY_OFFSET);
 
-	/* IPv4 header.*/
-	pucIPHeader = &cmdMdnsParam->aucMdnsIPHdr[0];
-	/* Version: 4, Length:(5*4) */
-	pucIPHeader[0] = 4<<4 | 5;
+	/* Fill ip header */
+	prIphdr = (struct iphdr *)&cmdMdnsParam->aucMdnsIPHdr[0];
+	/* Length:(5*4) */
+	prIphdr->ihl = 5;
+	prIphdr->version = IP_VERSION_4;
 	/* Diff.Services */
-	pucIPHeader[1] = 0;
-	/* IP length:
+	prIphdr->tos = 0;
+	/* IP length: will fill in fw
 	*(IPV4_HEADER_LENGTH + UDP_HEADER_LENGTH + u4MdnsLen)
 	*/
-	pucIPHeader[2] = 0;
-	pucIPHeader[3] = 0;
-	/* Identifier.*/
-	pucIPHeader[4] = 0;
-	pucIPHeader[5] = 0;
-	/* Fragmentation Flags, Mask 0xE0.*/
-	pucIPHeader[6] = 0;
-	pucIPHeader[6] = 1 << 6;
-	/* Fragment Offset, [6,7]Mask 0x1FFF.*/
-	pucIPHeader[7] = 0;
-	/* TTL.*/
-	pucIPHeader[8] = 255;
+	prIphdr->tot_len = 0;
+	prIphdr->id = 0;
+	prIphdr->frag_off = 1 << 6;
+	prIphdr->ttl = 255;
 	/* Protocol, UDP.*/
-	pucIPHeader[9] = 17;
-	/* Header Checksum.*/
-	pucIPHeader[10] = 0;
-	pucIPHeader[11] = 0;
+	prIphdr->protocol = 17;
+	prIphdr->check = 0;
 	/* Source IP: FW could check and update SIP again.*/
-	pucIPHeader[12] = 0;
-	pucIPHeader[13] = 0;
-	pucIPHeader[14] = 0;
-	pucIPHeader[15] = 0;
+	prIphdr->saddr = 0;
 	/* DIP:MC IP(224.0.0.251) */
-	pucIPHeader[16] = 224;
-	pucIPHeader[17] = 0;
-	pucIPHeader[18] = 0;
-	pucIPHeader[19] = 251;
+	prIphdr->daddr = HTONL(224 << 24 | 251);
 
-	/*UDP header*/
-	pucUDPHeader = &cmdMdnsParam->aucMdnsUdpHdr[0];
+	/* fill UDP Header */
+	prUdphdr = (struct udphdr *)&cmdMdnsParam->aucMdnsUdpHdr[0];
 	/* Source port: 5353 */
-	pucUDPHeader[0] = (5353 & 0xff00) >> 8;
-	pucUDPHeader[1] = 5353 & 0x00ff;
+	prUdphdr->source = HTONS(5353);
 	/* Destination port: 5353 */
-	pucUDPHeader[2] = (5353 & 0xff00) >> 8;
-	pucUDPHeader[3] = 5353 & 0x00ff;
+	prUdphdr->dest = HTONS(5353);
 	/* UDP length: Calculate by FW*/
-	pucUDPHeader[4] = 0;
-	pucUDPHeader[5] = 0;
+	prUdphdr->len = 0;
 	/* UDP CheckSum: Calculate by FW*/
-	pucUDPHeader[6] = 0;
-	pucUDPHeader[7] = 0;
+	prUdphdr->check = 0;
 
-	/* Store A RR.*/
-	pucMdnsARecord = &cmdMdnsParam->mdnsARecord[0];
-	/* Type.*/
-	pucMdnsARecord[0] = 0;
-	pucMdnsARecord[1] = 1;
-	/* Class.*/
-	pucMdnsARecord[2] = (32769 & 0xff00) >> 8;
-	pucMdnsARecord[3] = 32769 & 0x00ff;
-	/* TTL.*/
-	pucMdnsARecord[4] = 0;
-	pucMdnsARecord[5] = 0;
-	pucMdnsARecord[6] = (4500 & 0xff00) >> 8;
-	pucMdnsARecord[7] = 4500 & 0x00ff;
-	/* Data Length.*/
-	pucMdnsARecord[8] = 0;
-	pucMdnsARecord[9] = 4;
-	/* SIP Address.*/
-	pucMdnsARecord[10] = 0;
-	pucMdnsARecord[11] = 0;
-	pucMdnsARecord[12] = 0;
-	pucMdnsARecord[13] = 0;
+	rStatus = kalIoctl(prGlueInfo, wlanoidSetMdnsCmdToFw,
+			   cmdMdnsParam,
+			   sizeof(struct CMD_MDNS_PARAM_T),
+			   TRUE, TRUE, TRUE, &u4BufLen);
 
-	wlanSendSetQueryCmd(prGlueInfo->prAdapter,
-				CMD_ID_SET_MDNS_RECORD,
-				TRUE,
-				FALSE,
-				FALSE,
-				NULL,
-				NULL,
-				sizeof(struct CMD_MDNS_PARAM_T),
-				(uint8_t *)cmdMdnsParam,
-				NULL,
-				0);
+	if (rStatus != WLAN_STATUS_SUCCESS)
+		DBGLOG(REQ, ERROR, "set mdns cmd error.\n");
 
-	kalMemFree(cmdMdnsParam, VIR_MEM_TYPE,
+	kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
 		sizeof(struct CMD_MDNS_PARAM_T));
 }
+
+void kalAddMdnsRecord(struct GLUE_INFO *prGlueInfo,
+		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct LINK *prMdnsRecordList;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+
+	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
+				rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+		if (kalMemCmp(&prMdnsParamEntry->mdns_param,
+				&prMdnsUplayerInfo->mdns_param,
+				sizeof(struct MDNS_PARAM_T)) == 0) {
+			DBGLOG(REQ, ERROR, "mdns record is in the buffer.\n");
+			return;
+		}
+	}
+
+	prMdnsParamEntry = mdnsAllocateParamEntry(prGlueInfo->prAdapter);
+	if (prMdnsParamEntry) {
+		kalMemCopy(&prMdnsParamEntry->mdns_param,
+				&prMdnsUplayerInfo->mdns_param,
+				sizeof(struct MDNS_PARAM_T));
+		LINK_INSERT_TAIL(prMdnsRecordList,
+				&prMdnsParamEntry->rLinkEntry);
+	} else {
+		DBGLOG(REQ, ERROR, "alloc mdns record failed.\n");
+	}
+}
+
+void kalDelMdnsRecord(struct GLUE_INFO *prGlueInfo,
+		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo) {
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntryNext;
+	struct LINK *prMdnsRecordList;
+	struct LINK *prMdnsRecordFreeList;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+	prMdnsRecordFreeList = &prMdnsInfo->rMdnsRecordFreeList;
+
+	LINK_FOR_EACH_ENTRY_SAFE(prMdnsParamEntry, prMdnsParamEntryNext,
+		prMdnsRecordList, rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+		if (kalMemCmp(&prMdnsParamEntry->mdns_param,
+				&prMdnsUplayerInfo->mdns_param,
+				sizeof(struct MDNS_PARAM_T)) == 0) {
+			DBGLOG(REQ, ERROR, "del mdns record.\n");
+			LINK_REMOVE_KNOWN_ENTRY(prMdnsRecordList,
+				prMdnsParamEntry);
+			LINK_INSERT_HEAD(prMdnsRecordFreeList,
+				&prMdnsParamEntry->rLinkEntry);
+		}
+
+	}
+}
+
+void kalShowMdnsRecord(struct GLUE_INFO *prGlueInfo)
+{
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct LINK *prMdnsRecordList;
+	int cnt = 0;
+
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
+
+	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
+				rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+		DBGLOG(REQ, ERROR, "ptr name: len[%u] %s\n",
+			prMdnsParamEntry->mdns_param.query_ptr.name_length,
+			prMdnsParamEntry->mdns_param.query_ptr.name);
+		DBGLOG(REQ, ERROR, "srv name: len[%u] %s\n",
+			prMdnsParamEntry->mdns_param.query_srv.name_length,
+			prMdnsParamEntry->mdns_param.query_srv.name);
+		DBGLOG(REQ, ERROR, "txt name: len[%u] %s\n",
+			prMdnsParamEntry->mdns_param.query_txt.name_length,
+			prMdnsParamEntry->mdns_param.query_txt.name);
+		DBGLOG(REQ, ERROR, "a name: len[%u] %s\n",
+			prMdnsParamEntry->mdns_param.query_a.name_length,
+			prMdnsParamEntry->mdns_param.query_a.name);
+		DBGLOG_MEM8(REQ, ERROR, prMdnsParamEntry->mdns_param.response,
+			prMdnsParamEntry->mdns_param.response_len);
+		cnt++;
+	}
+	DBGLOG(REQ, ERROR, "record cnt %d\n", cnt);
+}
+
 
 void kalSendMdnsDisableToFw(struct GLUE_INFO *prGlueInfo)
 {
 	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
+	uint32_t u4BufLen = 0;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 
-	cmdMdnsParam = (struct CMD_MDNS_PARAM_T *)kalMemAlloc(
-			sizeof(struct CMD_MDNS_PARAM_T), VIR_MEM_TYPE);
-
-	if (!cmdMdnsParam)
+	cmdMdnsParam =
+		kalMemAlloc(sizeof(struct CMD_MDNS_PARAM_T), PHY_MEM_TYPE);
+	if (!cmdMdnsParam) {
+		DBGLOG(REQ, WARN, "%s, alloc mem failed\n", __func__);
 		return;
+	}
 
 	kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
 
 	cmdMdnsParam->ucCmd = MDNS_CMD_DISABLE;
 
-	DBGLOG(SW4, ERROR, "mDNS Disable.\n");
+	DBGLOG(SW4, STATE, "mDNS disable.\n");
 
-	wlanSendSetQueryCmd(prGlueInfo->prAdapter,
-				CMD_ID_SET_MDNS_RECORD,
-				TRUE,
-				FALSE,
-				FALSE,
-				NULL,
-				NULL,
-				sizeof(struct CMD_MDNS_PARAM_T),
-				(uint8_t *)cmdMdnsParam,
-				NULL,
-				0);
+	rStatus = kalIoctl(prGlueInfo, wlanoidSetMdnsCmdToFw,
+			   cmdMdnsParam,
+			   sizeof(struct CMD_MDNS_PARAM_T),
+			   TRUE, TRUE, TRUE, &u4BufLen);
 
-	kalMemFree(cmdMdnsParam, VIR_MEM_TYPE,
+	if (rStatus != WLAN_STATUS_SUCCESS)
+		DBGLOG(REQ, ERROR, "set mdns cmd error.\n");
+
+	kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
 		sizeof(struct CMD_MDNS_PARAM_T));
 }
 
-uint8_t kalAddMdnsCache(struct MDNS_RESP_INFO_T *respInfo)
+void kalSendClearRecordToFw(struct GLUE_INFO *prGlueInfo)
 {
+	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
+	uint32_t u4BufLen = 0;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
+
+	cmdMdnsParam =
+		kalMemAlloc(sizeof(struct CMD_MDNS_PARAM_T), PHY_MEM_TYPE);
+	if (!cmdMdnsParam) {
+		DBGLOG(REQ, WARN, "%s, alloc mem failed\n", __func__);
+		return;
+	}
+
+	kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
+
+	cmdMdnsParam->ucCmd = MDNS_CMD_CLEAR_RECORD;
+
+	rStatus = kalIoctl(prGlueInfo, wlanoidSetMdnsCmdToFw,
+			   cmdMdnsParam,
+			   sizeof(struct CMD_MDNS_PARAM_T),
+			   TRUE, TRUE, TRUE, &u4BufLen);
+
+	if (rStatus != WLAN_STATUS_SUCCESS)
+		DBGLOG(REQ, ERROR, "set mdns cmd error.\n");
+
+
+	kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
+		sizeof(struct CMD_MDNS_PARAM_T));
+}
+
+
+void kalSendMdnsRecordToFw(struct GLUE_INFO *prGlueInfo)
+{
+	struct CMD_MDNS_PARAM_T *cmdMdnsParam;
+	struct MDNS_INFO_T *prMdnsInfo;
+	struct MDNS_PARAM_ENTRY_T *prMdnsParamEntry;
+	struct LINK *prMdnsRecordList;
 	uint8_t i;
-	bool flag = FALSE;
-	struct MDNS_Template_Record *respTemplate;
+	uint32_t u4BufLen = 0;
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 
-	respTemplate = (struct MDNS_Template_Record *)kalMemAlloc(
-			sizeof(struct MDNS_Template_Record), PHY_MEM_TYPE);
-
-	if (respTemplate == NULL) {
-		DBGLOG(SW4, ERROR, "kmalloc failed.\n");
-		return 1;
+	cmdMdnsParam =
+		kalMemAlloc(sizeof(struct CMD_MDNS_PARAM_T), PHY_MEM_TYPE);
+	if (!cmdMdnsParam) {
+		DBGLOG(REQ, WARN, "%s, alloc mem failed\n", __func__);
+		return;
 	}
 
-	kalMemZero(respTemplate, sizeof(struct MDNS_Template_Record));
-	kalPickMdnsParamFromResp(respInfo, respTemplate);
+	prMdnsInfo = &prGlueInfo->prAdapter->rMdnsInfo;
+	prMdnsRecordList = &prMdnsInfo->rMdnsRecordList;
 
-	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
-		/* if query name is same, newer one replace the older */
-		if (kalMemCmp(&respTemplate->mdnsQuestionTemplate,
-				&gRspCacheRecord[i].mdnsQuestionTemplate,
-				sizeof(struct MDNS_QUESTION)) == 0 &&
-			kalMemCmp(&respTemplate->mdnsResponseRecord,
-				&gRspCacheRecord[i].mdnsResponseRecord,
-				sizeof(struct MDNS_ANSWER_RR)) == 0 &&
-			kalMemCmp(&respTemplate->mdnsTxtRecord,
-				&gRspCacheRecord[i].mdnsTxtRecord,
-				sizeof(struct MDNS_TXT_RR)) == 0 &&
-			kalMemCmp(&respTemplate->mdnsSrvRecord,
-				&gRspCacheRecord[i].mdnsSrvRecord,
-				sizeof(struct MDNS_SRV_RR)) == 0) {
-			respTemplate->bIsUsed = TRUE;
-			respTemplate->u4RecordId = i;
-			kalMemCopy(&gRspCacheRecord[i],
-				respTemplate,
-				sizeof(struct MDNS_Template_Record));
-			flag = TRUE;
-			break;
+	i = 0;
+
+	LINK_FOR_EACH_ENTRY(prMdnsParamEntry, prMdnsRecordList,
+			rLinkEntry, struct MDNS_PARAM_ENTRY_T) {
+
+		kalMemZero(cmdMdnsParam, sizeof(struct CMD_MDNS_PARAM_T));
+
+		i++;
+		cmdMdnsParam->ucCmd = MDNS_CMD_ADD_RECORD;
+		cmdMdnsParam->u4RecordId = i;
+		kalMemCopy(&cmdMdnsParam->mdns_param,
+				&prMdnsParamEntry->mdns_param,
+				sizeof(struct MDNS_PARAM_T));
+
+		rStatus = kalIoctl(prGlueInfo, wlanoidSetMdnsCmdToFw,
+			   cmdMdnsParam,
+			   sizeof(struct CMD_MDNS_PARAM_T),
+			   TRUE, TRUE, TRUE, &u4BufLen);
+
+		if (rStatus != WLAN_STATUS_SUCCESS)
+			DBGLOG(REQ, ERROR, "set mdns cmd error.\n");
+	}
+
+	kalMemFree(cmdMdnsParam, PHY_MEM_TYPE,
+		sizeof(struct CMD_MDNS_PARAM_T));
+}
+
+void kalMdnsProcess(IN struct GLUE_INFO *prGlueInfo,
+		IN struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo)
+{
+	if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_ENABLE) {
+		if (prGlueInfo->prAdapter->mdns_offload_enable == FALSE) {
+			DBGLOG(REQ, INFO, "mDNS Enable.\n");
+			prGlueInfo->prAdapter->mdns_offload_enable = TRUE;
+			kalSendMdnsEnableToFw(prGlueInfo);
+		} else
+			DBGLOG(REQ, STATE, "mDNS already Enable.\n");
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_ADD_RECORD) {
+		if (prGlueInfo->prAdapter->mdns_offload_enable == TRUE) {
+			DBGLOG(REQ, INFO, "Add Record.\n");
+			kalAddMdnsRecord(prGlueInfo, prMdnsUplayerInfo);
+		} else
+			DBGLOG(REQ, WARN, "mDNS is disable, no add record.\n");
+	}
+
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_DISABLE) {
+		if (prGlueInfo->prAdapter->mdns_offload_enable == TRUE) {
+			DBGLOG(REQ, INFO, "mdns disable.\n");
+			prGlueInfo->prAdapter->mdns_offload_enable = FALSE;
+			kalMdnsOffloadInit(prGlueInfo->prAdapter);
+			kalSendMdnsDisableToFw(prGlueInfo);
+		} else
+			DBGLOG(REQ, STATE, "mDNS is aready disabled.\n");
+	}
+
+#if CFG_SUPPORT_MDNS_OFFLOAD_GVA
+	/* only for gva, need to remove record when ttl is 0 */
+	else if (prMdnsUplayerInfo->ucCmd == MDNS_CMD_DEL_RECORD) {
+		if (prGlueInfo->prAdapter->mdns_offload_enable == TRUE) {
+			DBGLOG(REQ, INFO, "DEL Record.\n");
+			kalDelMdnsRecord(prGlueInfo, prMdnsUplayerInfo);
+		} else
+			DBGLOG(REQ, WARN, "mDNS is disable, no del record.\n");
+		}
+#endif
+}
+
+#if CFG_SUPPORT_MDNS_OFFLOAD_GVA
+uint16_t kalMdsnParseName(uint8_t *pucMdnsHdr, uint16_t offset,
+			uint8_t *name, uint16_t *name_len)
+{
+	uint16_t pos = 0;
+	uint16_t i = 0;
+	uint8_t compress = FALSE;
+
+	/* parse compress name */
+	/* there may be compress name contain compress name */
+	pos = offset;
+	while (pucMdnsHdr[offset] != 0) {
+		if ((pucMdnsHdr[offset] & 0xc0) != 0xc0) {
+			name[i] = pucMdnsHdr[offset];
+			offset++;
+			i++;
+		} else {
+			/* record the first compress pos */
+			if (compress == FALSE) {
+				pos = offset;
+				compress = TRUE;
+			}
+			offset = NTOHS(*(uint16_t *)(pucMdnsHdr + offset))
+						& 0x3fff;
 		}
 	}
 
-	if (flag == TRUE) {
-		DBGLOG(SW4, LOUD, "already in the table, record %d.\n", i);
+	/* for compress, c0xx 2bytes, for uncompress, 0 as a end of name */
+	if (compress == TRUE)
+		pos += 2;
+	else
+		pos += i + 1;
+
+	/* include the end char 0 */
+	*name_len = i + 1;
+
+	return pos;
+}
+
+void kalProcessMdnsRespPkt(struct GLUE_INFO *prGlueInfo, uint8_t *pucMdnsHdr)
+{
+	uint8_t  i;
+	uint16_t pos;
+	uint16_t usMdnsId, usMdnsFlags;
+	uint16_t usQuestionCnt, usAnswerCnt, usAuthCnt, usAddtionCnt;
+	uint32_t ttl;
+	uint16_t type, cl, dataLen;
+	uint8_t  domName[MDNS_QUESTION_NAME_MAX_LEN];
+	uint16_t domNameLen;
+	struct WLAN_MDNS_HDR_T *prMdnsHdr;
+	struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo = NULL;
+	struct MDNS_PARAM_T *prMdnsParam;
+	struct MDNS_TEMPLATE_T *prMdnsTemplate;
+
+	prMdnsUplayerInfo =
+		kalMemAlloc(sizeof(struct MDNS_INFO_UPLAYER_T), PHY_MEM_TYPE);
+	if (!prMdnsUplayerInfo) {
+		DBGLOG(REQ, WARN, "%s, alloc mem failed\n", __func__);
+		return;
+	}
+
+	kalMemZero(prMdnsUplayerInfo, sizeof(struct MDNS_INFO_UPLAYER_T));
+
+	pos = 0;
+
+	prMdnsHdr = (struct WLAN_MDNS_HDR_T *)pucMdnsHdr;
+	usMdnsId = NTOHS(prMdnsHdr->usMdnsId);
+	usMdnsFlags = NTOHS(prMdnsHdr->usMdnsFlags);
+	usQuestionCnt = NTOHS(prMdnsHdr->usQuestionCnt);
+	usAnswerCnt = NTOHS(prMdnsHdr->usAnswerCnt);
+	usAuthCnt = NTOHS(prMdnsHdr->usAuthCnt);
+	usAddtionCnt = NTOHS(prMdnsHdr->usAddtionCnt);
+	pos +=  sizeof(struct WLAN_MDNS_HDR_T);
+
+	DBGLOG(SW4, LOUD, "MDNS PKT[ID %u] flags[0x%x]\n",
+			usMdnsId, usMdnsFlags);
+	DBGLOG(SW4, LOUD, "questionCnt[%u] answerCnt[%u]\n",
+			usQuestionCnt, usAnswerCnt);
+	DBGLOG(SW4, LOUD, "authcnt[%u] addCnt[%u]\n",
+			usAuthCnt, usAddtionCnt);
+
+	if ((usMdnsFlags & 0x8000) == 0) {
+		DBGLOG(SW4, LOUD, "MDNS is query packet\n");
 		goto exit;
 	}
 
-	for (i = 0; i <  MAX_MDNS_CACHE_NUM; i++) {
-		/* find a unused one */
-		if (gRspCacheRecord[i].bIsUsed == FALSE) {
-			respTemplate->u4RecordId = i;
-			respTemplate->bIsUsed = TRUE;
-			kalMemCopy(&gRspCacheRecord[i],
-				respTemplate,
-				sizeof(struct MDNS_Template_Record));
-			flag = TRUE;
+	if ((usAnswerCnt == 1 && usAddtionCnt == 3)
+		|| (usAnswerCnt == 4 && usAddtionCnt == 0)) {
+		DBGLOG(SW4, LOUD, "MDNS ans %u add %u\n",
+			usAnswerCnt, usAddtionCnt);
+	} else {
+		DBGLOG(SW4, LOUD, "MDNS ans %u add %u\n",
+			usAnswerCnt, usAddtionCnt);
+		goto exit;
+	}
+
+	prMdnsParam = &prMdnsUplayerInfo->mdns_param;
+
+	for (i = 0; i < 4; i++) {
+		kalMemZero(domName, MDNS_QUESTION_NAME_MAX_LEN);
+		domNameLen = 0;
+
+		pos = kalMdsnParseName(pucMdnsHdr, pos,
+							domName,
+							&domNameLen);
+
+		type = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
+		pos += MDNS_PAYLOAD_TYPE_LEN;
+
+		cl = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
+		pos += MDNS_PAYLOAD_CLASS_LEN;
+
+		ttl = NTOHL(*(uint32_t *)(pucMdnsHdr + pos));
+		pos += MDNS_PAYLOAD_TTL_LEN;
+
+		dataLen = NTOHS(*(uint16_t *)(pucMdnsHdr + pos));
+		pos += MDNS_PAYLOAD_DATALEN_LEN;
+
+		switch (type) {
+		case MDNS_ELEM_TYPE_PTR:
+			prMdnsTemplate = &prMdnsParam->query_ptr;
+			if (ttl != 0)
+				prMdnsUplayerInfo->ucCmd = MDNS_CMD_ADD_RECORD;
+			else
+				prMdnsUplayerInfo->ucCmd = MDNS_CMD_DEL_RECORD;
 			break;
+		case MDNS_ELEM_TYPE_TXT:
+			prMdnsTemplate = &prMdnsParam->query_txt;
+			break;
+		case MDNS_ELEM_TYPE_SRV:
+			prMdnsTemplate = &prMdnsParam->query_srv;
+			break;
+		case MDNS_ELEM_TYPE_A:
+			prMdnsTemplate = &prMdnsParam->query_a;
+			break;
+		default:
+			DBGLOG(SW4, LOUD, "not needed type %u\n", type);
+			goto exit;
 		}
+
+		kalMemCopy(prMdnsTemplate->name, domName, domNameLen);
+		prMdnsTemplate->name_length = domNameLen;
+		prMdnsTemplate->type = type;
+		prMdnsTemplate->class = cl;
+		pos += dataLen;
 	}
 
-	if (flag == TRUE) {
-		DBGLOG(SW4, LOUD, "find a unused record %d.\n", i);
-		goto exit;
-	}
+	kalMemCopy(prMdnsParam->response, pucMdnsHdr, pos);
+	prMdnsParam->response_len = pos;
 
-	DBGLOG(SW4, LOUD, "cache full, replace the oldest index %d.\n",
-			gOldestIndex);
-
-	respTemplate->u4RecordId = gOldestIndex;
-	kalMemCopy(&gRspCacheRecord[gOldestIndex],
-				respTemplate,
-				sizeof(struct MDNS_Template_Record));
-	gOldestIndex = (gOldestIndex + 1) % MAX_MDNS_CACHE_NUM;
+	kalMdnsProcess(prGlueInfo, prMdnsUplayerInfo);
 
 exit:
-	kalMemFree(respTemplate, PHY_MEM_TYPE,
-		sizeof(struct MDNS_Template_Record));
-
-	return 0;
+	kalMemFree(prMdnsUplayerInfo, PHY_MEM_TYPE,
+		sizeof(struct MDNS_INFO_UPLAYER_T));
 }
-
-void kalDelMdnsCache(struct MDNS_RESP_INFO_T *respInfo)
-{
-	uint8_t i, j;
-
-	for (i = 0; i < MAX_MDNS_CACHE_NUM; i++) {
-		if (kalMemCmp(respInfo->ptrInfo.queryName,
-			gRspCacheRecord[i].mdnsQuestionTemplate.name,
-				MDNS_QUESTION_NAME_MAX_LEN) == 0 &&
-			kalMemCmp(respInfo->ptrInfo.domName,
-				gRspCacheRecord[i].ucServiceName,
-				MDNS_SERVICE_NAME_MAX_LEN) == 0) {
-			DBGLOG(SW4, LOUD, "goodbye packet, delete %d.\n", i);
-			kalMemZero(&gRspCacheRecord[i],
-					sizeof(struct MDNS_Template_Record));
-			break;
-		}
-	}
-
-	/* move the other to fill the one */
-	for (j = i + 1; j < MAX_MDNS_CACHE_NUM; j++) {
-		if (gRspCacheRecord[j].bIsUsed == 0)
-			continue;
-
-		gRspCacheRecord[j].u4RecordId -= 1;
-		kalMemCopy(&gRspCacheRecord[j - 1], &gRspCacheRecord[j],
-				sizeof(struct MDNS_Template_Record));
-
-	}
-
-	kalMemZero(&gRspCacheRecord[MAX_MDNS_CACHE_NUM - 1],
-			sizeof(struct MDNS_Template_Record));
-}
-
-void kalInitMdnsCache(void)
-{
-	kalMemZero(&gRspCacheRecord,
-		sizeof(struct MDNS_Template_Record) * MAX_MDNS_CACHE_NUM);
-}
+#endif
+#endif
 
 #endif
 
@@ -8096,6 +8147,10 @@ void kalPerMonHandler(IN struct ADAPTER *prAdapter,
 	/* struct WIFI_VAR *prWifiVar = &prAdapter->rWifiVar; */
 #endif
 
+#if CFG_SUPPORT_TPENHANCE_MODE
+	uint32_t u4UpdatePeriod = 0;
+#endif
+
 	if (prGlueInfo->ulFlag & GLUE_FLAG_HALT)
 		return;
 
@@ -8221,6 +8276,27 @@ void kalPerMonHandler(IN struct ADAPTER *prAdapter,
 		}
 	}
 
+#if CFG_SUPPORT_TPENHANCE_MODE
+	switch (u4Idx) {
+	case 1:
+	case 2:
+	case 3:
+		u4UpdatePeriod = 100;
+		break;
+	case 4:
+	case 5:
+		u4UpdatePeriod = 200;
+		break;
+	case 6:
+	case 7:
+	case 8:
+	case 9:
+	case 10:
+		u4UpdatePeriod = 1000;
+		break;
+	}
+#endif
+
 	if (!wlan_perf_monitor_force_enable &&
 	    (wlan_fb_power_down ||
 	     prGlueInfo->fgIsInSuspendMode ||
@@ -8249,6 +8325,13 @@ void kalPerMonHandler(IN struct ADAPTER *prAdapter,
 		}
 		prPerMonitor->u4UpdatePeriod =
 			prAdapter->rWifiVar.u4PerfMonUpdatePeriod;
+
+#if CFG_SUPPORT_TPENHANCE_MODE
+		if (u4UpdatePeriod && u4UpdatePeriod <
+				prAdapter->rWifiVar.u4PerfMonUpdatePeriod){
+			prPerMonitor->u4UpdatePeriod = u4UpdatePeriod;
+		}
+#endif
 #if (CFG_SUPPORT_PERF_IND == 1)
 		/* Only routine start timer when Tput exist*/
 		if (u4CurrentTp > 0) {
@@ -8320,6 +8403,69 @@ uint32_t kalPerMonGetInfo(IN struct ADAPTER *prAdapter,
 	       prPerMonitor->ulPerfMonFlag);
 
 	return u4Len;
+}
+
+uint32_t kalGetTpMbps(struct ADAPTER *prAdapter, uint8_t ucPath,
+	uint8_t ucBssIdx)
+{
+	uint32_t u4TpMbps = 0;
+	uint8_t ucBssCnt = 0;
+
+	if (!prAdapter
+		|| ucBssIdx > MAX_BSSID_NUM
+		|| ucPath > PKT_PATH_ALL)
+		return 0;
+
+	if (ucBssIdx < MAX_BSSID_NUM) {
+		/* Get Tp per BSS */
+		struct PERF_MONITOR_T *prPerMonitor;
+
+		prPerMonitor = &prAdapter->rPerMonitor;
+
+		if (!prPerMonitor)
+			return 0;
+
+		if (ucPath == PKT_PATH_TX)
+			u4TpMbps = ((prPerMonitor->ulWlanTxTp +
+				prPerMonitor->ulP2PTxTp) >> 17);
+		else if (ucPath == PKT_PATH_RX)
+			u4TpMbps = ((prPerMonitor->ulWlanRxTp +
+				prPerMonitor->ulP2PRxTp) >> 17);
+		else /* PKT_PATH_ALL */
+			u4TpMbps = ((prPerMonitor->ulWlanTxTp +
+				prPerMonitor->ulP2PTxTp +
+				prPerMonitor->ulWlanRxTp +
+				prPerMonitor->ulP2PRxTp) >> 17);
+	} else {
+		/* ucBssIdx == MAX_BSSID_NUM */
+		/* Get Tp per direction */
+		for (ucBssCnt = 0; ucBssCnt < MAX_BSSID_NUM; ucBssCnt++)
+			u4TpMbps +=
+				kalGetTpMbps(prAdapter, PKT_PATH_ALL, ucBssCnt);
+	}
+
+	return u4TpMbps;
+}
+
+
+uint8_t kalIsTputMode(struct ADAPTER *prAdapter, uint8_t ucPath,
+	uint8_t ucBssIdx)
+{
+	struct WIFI_VAR *prWifiVar = &prAdapter->rWifiVar;
+	uint32_t u4TpMbps = 0;
+	uint8_t ucRet = FALSE;
+
+	if (!prAdapter
+		|| ucBssIdx > MAX_BSSID_NUM
+		|| ucPath > PKT_PATH_ALL)
+		return FALSE;
+
+	u4TpMbps = kalGetTpMbps(prAdapter,  ucPath, ucBssIdx);
+
+	if (u4TpMbps > prWifiVar->ucTputThresholdMbps)
+		ucRet = TRUE;
+
+	return ucRet;
 }
 
 int32_t __weak kalBoostCpu(IN struct ADAPTER *prAdapter,
@@ -8552,10 +8698,6 @@ u_int8_t kalParseRandomMac(const struct net_device *ndev,
 	else
 		eth_zero_addr(ucMacAddr);
 
-	if (prBssInfo->fgIsScanOuiSet) {
-		kalMemCopy(ucMacAddr, prBssInfo->ucScanOui, MAC_OUI_LEN);
-		kalMemSet(pucMacAddrMask, 0xFF, MAC_OUI_LEN);
-	}
 	get_random_mask_addr(pucRandomMac, ucMacAddr, pucMacAddrMask);
 	log_dbg(SCN, INFO, "random mac=" MACSTR ", mac_addr=" MACSTR
 		", mac_addr_mask=%pM\n", MAC2STR(pucRandomMac),
@@ -8883,7 +9025,7 @@ int kalRxNapiPoll(struct napi_struct *napi, int budget)
 			break;
 
 #if IS_ENABLED(CFG_GRO_SUPPORT)
-		if (napi_gro_receive(napi, prSkb) == GRO_DROP)
+		napi_gro_receive(napi, prSkb);
 #else
 		if (netif_receive_skb(prSkb) != NET_RX_SUCCESS)
 #endif /* CFG_GRO_SUPPORT */
@@ -8903,10 +9045,40 @@ int kalRxNapiPoll(struct napi_struct *napi, int budget)
 #endif
 }
 
+void kal_Set_Thread_SchPolicy_Priority(IN struct GLUE_INFO *prGlueInfo)
+{
+	ASSERT(prGlueInfo);
+	/* Set thread's Schedule policy & priority */
+	if (prGlueInfo->prAdapter->rWifiVar.ucThreadPriority > 0) {
+		struct sched_param param = {
+			.sched_priority = prGlueInfo->prAdapter
+					->rWifiVar.ucThreadPriority
+		};
+		kal_sched_set(current,
+			prGlueInfo->prAdapter->rWifiVar
+			.ucThreadScheduling, &param,
+			prGlueInfo->prAdapter->rWifiVar
+			.cThreadNice);
+
+		DBGLOG(INIT, STATE,
+			"[%s]Set pri = %d, sched = %d\n",
+			KAL_GET_CURRENT_THREAD_NAME(),
+			prGlueInfo->prAdapter->rWifiVar.ucThreadPriority,
+			prGlueInfo->prAdapter->rWifiVar
+			.ucThreadScheduling);
+	}
+
+	/* Set thread's user nice */
+	set_user_nice(current, prGlueInfo->prAdapter->rWifiVar.cThreadNice);
+}
+
 unsigned long kal_kallsyms_lookup_name(const char *name)
 {
 	unsigned long ret = 0;
 
+	/* TODO: need to inplement >= v5.4 */
+#if	(CFG_ENABLE_GKI_SUPPORT != 1) && \
+		KERNEL_VERSION(5, 4, 0) > LINUX_VERSION_CODE
 	ret = kallsyms_lookup_name(name);
 	if (ret) {
 #ifdef CONFIG_ARM
@@ -8916,7 +9088,27 @@ unsigned long kal_kallsyms_lookup_name(const char *name)
 #endif
 #endif
 	}
+#endif
 	return ret;
+}
+void kal_sched_set(struct task_struct *p, int policy,
+		const struct sched_param *param,
+		int nice)
+{
+#if KERNEL_VERSION(5, 9, 0) <= LINUX_VERSION_CODE
+	/* apply auto-detection based on function description
+	* TODO:
+	* kernel prefer modify "current" only, add sanity here?
+	*/
+	if (policy == SCHED_NORMAL)
+		sched_set_normal(p, nice);
+	else if (policy == SCHED_FIFO)
+		sched_set_fifo(p);
+	else
+		sched_set_fifo_low(p);
+#else
+	sched_setscheduler(p, policy, param);
+#endif
 }
 
 

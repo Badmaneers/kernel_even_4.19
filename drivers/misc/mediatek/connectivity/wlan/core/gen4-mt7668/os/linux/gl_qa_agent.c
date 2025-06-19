@@ -1,70 +1,9 @@
-/******************************************************************************
- *
- * This file is provided under a dual license.  When you use or
- * distribute this software, you may choose to be licensed under
- * version 2 of the GNU General Public License ("GPLv2 License")
- * or BSD License.
- *
- * GPLv2 License
- *
- * Copyright(C) 2016 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
- *
- * BSD LICENSE
- *
- * Copyright(C) 2016 MediaTek Inc. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- *  * Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *  * Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *  * Neither the name of the copyright holder nor the names of its
- *    contributors may be used to endorse or promote products derived
- *    from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- * HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- *
- *****************************************************************************/
-/*
-	Module Name:
-	gl_ate_agent.c
-*/
-/*******************************************************************************
- *						C O M P I L E R	 F L A G S
- ********************************************************************************
- */
-
-/*******************************************************************************
- *						E X T E R N A L	R E F E R E N C E S
- ********************************************************************************
+// SPDX-License-Identifier: GPL-2.0
+/* 
+ *Copyright (c) 2020 MediaTek Inc. 
  */
 
 #include "precomp.h"
-
 #if (CFG_SUPPORT_QA_TOOL == 1)
 #include "gl_wext.h"
 #include "gl_cfg80211.h"
@@ -307,8 +246,42 @@ static INT_32 HQA_OpenAdapter(struct net_device *prNetDev,
 			      IN union iwreq_data *prIwReqData, HQA_CMD_FRAME *HqaCmdFrame)
 {
 	INT_32 i4Ret = 0;
+	P_GLUE_INFO_T prGlueInfo = NULL;
 
 	DBGLOG(RFTEST, INFO, "MT6632 : QA_AGENT HQA_OpenAdapter\n");
+	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+
+	/*
+	* g_ucEepromCurrentMode: For EEPROM content field of QA Tool
+	* 0 -> bin Mode
+	* 2 -> efuse Mode
+	*/
+
+	/*
+	* u4EepromMode: For EEPROM Type field of QA Tool
+	* 1 -> efuse Mode
+	* 2 -> flash Mode
+	* 3 -> eeprom Mode
+	* 4 -> bin Mode
+	*/
+
+	/*
+	* Synchronize EEPROM mode related parameters from
+	* ucEfuseBufferModeCal
+	*/
+	if (prGlueInfo->prAdapter->rWifiVar.ucEfuseBufferModeCal ==
+							LOAD_EFUSE) {
+		g_ucEepromCurrentMode = EFUSE_MODE;
+		u4EepromMode = 1;
+		DBGLOG(RFTEST, INFO,
+			"QA_AGENT HQA_OpenAdapter EEPROM = eFuse Mode\n");
+	} else if (prGlueInfo->prAdapter->rWifiVar.ucEfuseBufferModeCal ==
+							LOAD_EEPROM_BIN) {
+		g_ucEepromCurrentMode = BUFFER_BIN_MODE;
+		u4EepromMode = 4;
+		DBGLOG(RFTEST, INFO,
+			"QA_AGENT HQA_OpenAdapter EEPROM = Bin Mode\n");
+	}
 
 	i4Ret = MT_ATEStart(prNetDev, "ATESTART");
 
@@ -1827,6 +1800,10 @@ static INT_32 HQA_RfRegBulkRead(struct net_device *prNetDev,
 	else if (u4WfSel == 1)
 		u4Offset = u4Offset | 0x99910000;
 
+	if ((2 + (u4Length * 4)) > sizeof(HqaCmdFrame->Data)) {
+		i4Status = WLAN_STATUS_INVALID_LENGTH;
+		return i4Status;
+	}
 
 	for (u4Index = 0; u4Index < u4Length; u4Index++) {
 		rMcrInfo.u4McrOffset = u4Offset + u4Index * 4;
@@ -1944,6 +1921,14 @@ static INT_32 HQA_ReadEEPROM(struct net_device *prNetDev, IN union iwreq_data *p
 	Offset = ntohs(Offset);
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
+
+	/*  HQA_ReadEEPROM read size  only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR,
+			"QA_AGENT HQA_ReadEEPROM Len : %d not supported\n",
+			Len);
+		return WLAN_STATUS_FAILURE;
+	}
 
 #if  (CFG_EEPROM_PAGE_ACCESS == 1)
 	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
@@ -2080,7 +2065,7 @@ static INT_32 HQA_ReadBulkEEPROM(struct net_device *prNetDev,
 	PARAM_CUSTOM_ACCESS_EFUSE_T rAccessEfuseInfo;
 	UINT_32 u4BufLen = 0;
 	UINT_8  u4Loop = 0;
-
+	UINT_32 u4TotalOffset = 0;
 	UINT_16 Buffer;
 	P_GLUE_INFO_T prGlueInfo = NULL;
 	WLAN_STATUS rStatus = WLAN_STATUS_SUCCESS;
@@ -2095,8 +2080,24 @@ static INT_32 HQA_ReadBulkEEPROM(struct net_device *prNetDev,
 
 	memcpy(&Offset, HqaCmdFrame->Data + 2 * 0, 2);
 	Offset = ntohs(Offset);
+
+	if (Offset > (MAX_EEPROM_BUFFER_SIZE - 1)) {
+		DBGLOG(INIT, ERROR, "%s Offset : %d out of range (0x%x)\n",
+			__func__, Offset, MAX_EEPROM_BUFFER_SIZE);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
+
+    /* for bulk read, only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR,
+			"QA_AGENT HQA_ReadBulkEEPROM Len : %d not supported\n",
+			Len);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	tmp = Offset;
 	DBGLOG(INIT, INFO, "MT6632 : QA_AGENT HQA_ReadBulkEEPROM Offset : %d\n", Offset);
 	DBGLOG(INIT, INFO, "MT6632 : QA_AGENT HQA_ReadBulkEEPROM Len : %d\n", Len);
@@ -2128,7 +2129,17 @@ static INT_32 HQA_ReadBulkEEPROM(struct net_device *prNetDev,
 		}
 #endif
 		for (u4Loop = 0; u4Loop < Len; u4Loop += 2) {
-			memcpy(&Buffer, prGlueInfo->prAdapter->aucEepromVaule + Offset + u4Loop, 2);
+			/* Fix coverity issue: CID11341965 */
+			u4TotalOffset = Offset + u4Loop;
+			if ((u4TotalOffset) > EFUSE_BLOCK_SIZE - 1) {
+				DBGLOG(INIT, ERROR,
+					   "%s :Block accsess out of range, Offset %d u4Loop %d\n",
+					   __func__, Offset, u4Loop);
+				return WLAN_STATUS_FAILURE;
+			}
+
+			memcpy(&Buffer, prGlueInfo->prAdapter->aucEepromVaule +
+			       u4TotalOffset, 2);
 			Buffer = ntohs(Buffer);
 			DBGLOG(INIT, INFO, "MT6632 :From Efuse  u4Loop=%d  Buffer=%x\n", u4Loop, Buffer);
 			memcpy(HqaCmdFrame->Data + 2 + u4Loop, &Buffer, 2);
@@ -2136,11 +2147,19 @@ static INT_32 HQA_ReadBulkEEPROM(struct net_device *prNetDev,
 
 	} else {  /* Read from EEPROM */
 		for (u4Loop = 0; u4Loop < Len; u4Loop += 2) {
-			memcpy(&Buffer, uacEEPROMImage + Offset + u4Loop, 2);
+			/* Fix coverity issue: CID11353922 */
+			u4TotalOffset = Offset + u4Loop;
+			if ((u4TotalOffset) > MAX_EEPROM_BUFFER_SIZE - 1) {
+				DBGLOG(INIT, ERROR,
+					   "%s :Block accsess out of range, Offset %d u4Loop %d\n",
+					   __func__, Offset, u4Loop);
+				return WLAN_STATUS_FAILURE;
+			}
+			memcpy(&Buffer, uacEEPROMImage + u4TotalOffset, 2);
 			Buffer = ntohs(Buffer);
 			memcpy(HqaCmdFrame->Data + 2 + u4Loop, &Buffer, 2);
 			DBGLOG(INIT, INFO, "MT6632 : QA_AGENT HQA_ReadBulkEEPROM u4Loop=%d  u4Value=%x\n",
-				u4Loop, uacEEPROMImage[Offset + u4Loop]);
+				u4Loop, uacEEPROMImage[u4TotalOffset]);
 		}
 	}
 #endif
@@ -2221,6 +2240,7 @@ static INT_32 HQA_WriteBulkEEPROM(struct net_device *prNetDev,
 	UINT_8  u4Loop = 0, u4Index = 0;
 	UINT_16 ucTemp2;
 	UINT_16 i = 0;
+	UINT_32 u4TotalOffset = 0;
 
 	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
 	prAdapter = prGlueInfo->prAdapter;
@@ -2233,8 +2253,21 @@ static INT_32 HQA_WriteBulkEEPROM(struct net_device *prNetDev,
 
 	memcpy(&Offset, HqaCmdFrame->Data + 2 * 0, 2);
 	Offset = ntohs(Offset);
+
+	if (Offset > (MAX_EEPROM_BUFFER_SIZE - 1)) {
+		DBGLOG(INIT, ERROR, "%s Offset : %d out of range (0x%x)\n",
+			__func__, Offset, MAX_EEPROM_BUFFER_SIZE);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
+    /* for bulk access, only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR, "%s Len : %d not supported\n",
+			__func__, Len);
+		return WLAN_STATUS_FAILURE;
+	}
 
 	memcpy(&testBuffer1, HqaCmdFrame->Data + 2 * 2, Len);
 	testBuffer2 = ntohs(testBuffer1);
@@ -2349,9 +2382,20 @@ static INT_32 HQA_WriteBulkEEPROM(struct net_device *prNetDev,
 			memcpy(uacEEPROMImage + Offset, &ucTemp2, Len);
 		} else {
 			for (i = 0 ; i < 8 ; i++) {
-				memcpy(&ucTemp2, HqaCmdFrame->Data + 2 * 2 + 2*i, 2);
+				/* Fix coverity issue: CID10708595 */
+				u4TotalOffset = Offset + 2 * i;
+				if (u4TotalOffset >
+				    MAX_EEPROM_BUFFER_SIZE - 1) {
+					DBGLOG(INIT, ERROR,
+					"%s u4TotalOffset : %d not supported\n",
+						__func__, u4TotalOffset);
+					return WLAN_STATUS_FAILURE;
+				}
+				memcpy(&ucTemp2,
+				       HqaCmdFrame->Data + 2 * 2 + 2*i, 2);
 				ucTemp2 = ntohs(ucTemp2);
-				memcpy(uacEEPROMImage + Offset + 2*i, &ucTemp2, 2);
+				memcpy(uacEEPROMImage + u4TotalOffset,
+					&ucTemp2, 2);
 			}
 
 			if (!g_BufferDownload) {
@@ -6260,6 +6304,9 @@ static INT_32 HQA_MUSetMUTable(struct net_device *prNetDev,
 
 	ResponseToQA(HqaCmdFrame, prIwReqData, 2, i4Ret);
 
+	if (prTable != NULL)
+		kfree(prTable);
+
 	return i4Ret;
 }
 
@@ -7800,6 +7847,13 @@ int priv_qa_agent(IN struct net_device *prNetDev,
 	}
 
 	memset(HqaCmdFrame, 0, sizeof(*HqaCmdFrame));
+
+	/*  Fix security vulnerability in Wlan - heap OOB */
+	if (!prIwReqData || prIwReqData->data.length == 0 ||
+		prIwReqData->data.length > sizeof(*HqaCmdFrame)) {
+		i4Status = -EINVAL;
+		goto ERROR1;
+	}
 
 	if (copy_from_user(HqaCmdFrame, prIwReqData->data.pointer, prIwReqData->data.length)) {
 		i4Status = -EFAULT;

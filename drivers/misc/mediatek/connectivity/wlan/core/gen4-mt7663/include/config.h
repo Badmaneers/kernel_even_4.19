@@ -169,6 +169,13 @@
 /* SUPPORT GRO only if NAPI enabled */
 #define CFG_GRO_SUPPORT                 CFG_RX_NAPI_SUPPORT
 
+/* Support Linux TCP segmentation offload(TSO)
+ * With feature enabled, TCP stack may send a big TCP pkt to driver (more than
+ * MTU, 64k is max) and driver MUST splite this pkt into multiple MTU-sized pkts
+ */
+#ifndef CFG_SUPPORT_TX_TSO_SW
+#define CFG_SUPPORT_TX_TSO_SW	0
+#endif
 
 /*------------------------------------------------------------------------------
  * Driver config
@@ -201,6 +208,8 @@
 #endif
 
 #if (CFG_SUPPORT_DFS == 1)	/* Add by Enlai */
+/* If CSA new channel is DFS channel, link down directly*/
+#define CFG_DFS_NEWCH_DFS_FORCE_DISCONNECT	1
 /* Quiet (802.11h) */
 #define CFG_SUPPORT_QUIET	0
 /* Spectrum Management (802.11h): TPC and DFS */
@@ -258,8 +267,52 @@
 #define CFG_SUPPORT_MAGIC_PKT_VENDOR_EVENT	0
 #endif
 
+/* Enable Mdns offload */
+#ifndef CFG_SUPPORT_MDNS_OFFLOAD
+#define CFG_SUPPORT_MDNS_OFFLOAD	0
+#endif
+
+#if CFG_SUPPORT_MDNS_OFFLOAD
+#ifndef CFG_SUPPORT_MDNS_OFFLOAD_GVA
+#define CFG_SUPPORT_MDNS_OFFLOAD_GVA 0
+#endif
+
+#if CFG_SUPPORT_MDNS_OFFLOAD_GVA
+#define CFG_SUPPORT_MDNS_OFFLOAD_TV 0
+#else
+#define CFG_SUPPORT_MDNS_OFFLOAD_TV 1
+#endif
+
+#define TEST_CODE_FOR_MDNS			0
+#endif
+
 /* Enable A-MSDU RX Reordering Support */
 #define CFG_SUPPORT_RX_AMSDU	1
+
+/* Enable Fragment Support */
+#define CFG_SUPPORT_FRAG_SUPPORT 1
+
+/* Enable frag and de-AMSDU security patch */
+#define CFG_FRAG_DEAMSDU_ATTACK_DETECTION 1
+#if (CFG_FRAG_DEAMSDU_ATTACK_DETECTION)
+/* Enable A-MSDU Attack Detection */
+#define CFG_SUPPORT_AMSDU_ATTACK_DETECTION 1
+/* Enable Fragment Attack Detection */
+#define CFG_SUPPORT_FRAG_ATTACK_DETECTION 1
+/* Enable Fake EAPOL Detection */
+#define CFG_SUPPORT_FAKE_EAPOL_DETECTION 1
+/* Enable TKIP MIC ERROR Detection */
+#define CFG_SUPPORT_TKIP_MICERROR_DETECTION 1
+#else
+/* Enable A-MSDU Attack Detection */
+#define CFG_SUPPORT_AMSDU_ATTACK_DETECTION 0
+/* Enable Fragment Attack Detection */
+#define CFG_SUPPORT_FRAG_ATTACK_DETECTION 0
+/* Enable Fake EAPOL Detection */
+#define CFG_SUPPORT_FAKE_EAPOL_DETECTION 0
+/* Enable TKIP MIC ERROR Detection */
+#define CFG_SUPPORT_TKIP_MICERROR_DETECTION 0
+#endif
 
 /* Disable Android wake_lock operations */
 #ifndef CFG_ENABLE_WAKE_LOCK
@@ -350,6 +403,10 @@
  */
 #ifndef CFG_SDIO_RX_AGG_WORKQUE
 #define CFG_SDIO_RX_AGG_WORKQUE                      0
+#endif
+
+#ifndef CFG_SDIO_RX_DE_AGG_IN_THREAD
+#define CFG_SDIO_RX_DE_AGG_IN_THREAD           0
 #endif
 
 #if (CFG_SDIO_RX_AGG == 1) && (CFG_SDIO_INTR_ENHANCE == 0)
@@ -564,6 +621,7 @@
 
 #define MAX_2G_BAND_CHN_NUM		14
 #define MAX_5G_BAND_CHN_NUM		(MAX_CHN_NUM - MAX_2G_BAND_CHN_NUM)
+#define MAX_PER_BAND_CHN_NUM		(MAX_CHN_NUM - MAX_2G_BAND_CHN_NUM)
 #define ACS_PRINT_BUFFER_LEN		200
 
 /*------------------------------------------------------------------------------
@@ -852,8 +910,12 @@
 
 #define CFG_SHOW_FULL_MACADDR     1
 
+#ifndef CFG_SUPPORT_VO_ENTERPRISE
 #define CFG_SUPPORT_VO_ENTERPRISE               1
+#endif
+
 #define CFG_SUPPORT_WMM_AC                      1
+
 #if CFG_SUPPORT_VO_ENTERPRISE
 #define CFG_SUPPORT_802_11R                     1
 #define CFG_SUPPORT_802_11K                     1
@@ -863,8 +925,14 @@
 #endif
 
 /* Support 802.11v Wireless Network Management */
+#if CFG_SUPPORT_VO_ENTERPRISE
 #define CFG_SUPPORT_802_11V                     1
 #define CFG_SUPPORT_802_11V_BSS_TRANSITION_MGT  1
+#else
+#define CFG_SUPPORT_802_11V                     0
+#define CFG_SUPPORT_802_11V_BSS_TRANSITION_MGT  0
+#endif
+
 #define CFG_SUPPORT_802_11V_TIMING_MEASUREMENT	0
 
 #if (CFG_SUPPORT_802_11V_TIMING_MEASUREMENT == 1) && \
@@ -985,16 +1053,28 @@
  *------------------------------------------------------------------------------
  */
 #define CFG_SUPPORT_PNO                    (0)
-#define CFG_SUPPORT_SCHED_SCAN             (0)
+#ifndef CFG_SUPPORT_SCHED_SCAN
+#define CFG_SUPPORT_SCHED_SCAN             (1)
+#endif
 #define SCHED_SCAN_CMD_VERSION             (1)
+
+#ifndef CFG_SUPPORT_WAKE_ON_PNO
+#define CFG_SUPPORT_WAKE_ON_PNO            (0)
+#endif
 
 /* this value should be aligned to auSsid in struct CMD_SCHED_SCAN_REQ */
 #define CFG_SCAN_HIDDEN_SSID_MAX_NUM       (10)
 /* this value should be aligned to auMatchSsid in struct CMD_SCHED_SCAN_REQ */
 #define CFG_SCAN_SSID_MATCH_MAX_NUM        (16)
 
-#if CFG_SUPPORT_PNO != CFG_SUPPORT_SCHED_SCAN
+#if !CFG_SUPPORT_CFG80211_AUTH && CFG_SUPPORT_PNO != CFG_SUPPORT_SCHED_SCAN
 #error Value of CFG_SUPPORT_SCHED_SCAN and CFG_SUPPORT_PNO should be the same
+#endif
+
+#if CFG_SUPPORT_WAKE_ON_PNO == 1
+#if CFG_SUPPORT_WAKE_ON_PNO != CFG_SUPPORT_PNO
+#error CFG_SUPPORT_PNO must enabled when CFG_SUPPORT_WAKE_ON_PNO enabled
+#endif
 #endif
 
 /*------------------------------------------------------------------------------
@@ -1069,6 +1149,9 @@
  */
 
 #define CFG_SUPPORT_EASY_DEBUG               1
+#ifndef CFG_SUPPORT_FW_DBG_LEVEL_CTRL
+#define CFG_SUPPORT_FW_DBG_LEVEL_CTRL        0
+#endif
 
 
 /*------------------------------------------------------------------------------
@@ -1232,7 +1315,9 @@
  * Flags to force enable performance monitor even when screen is OFF
  *------------------------------------------------------------------------------
  */
+#ifndef CFG_FORCE_ENABLE_PERF_MONITOR
 #define CFG_FORCE_ENABLE_PERF_MONITOR	0
+#endif
 
 /*------------------------------------------------------------------------------
  * Flags to ignore invalid auth tsn issue (ex. ALPS03089071)
@@ -1386,10 +1471,89 @@
 
 /*------------------------------------------------------------------------------
  * Support platform power off control scenario
+ * DC off for Mstar DTV
  *------------------------------------------------------------------------------
  */
 #ifndef CFG_POWER_OFF_CTRL_SUPPORT
 #define CFG_POWER_OFF_CTRL_SUPPORT	0
+#endif
+
+/*
+*   Add callback for DC off low power settings for MTK DTV
+*/
+#ifndef CFG_DC_USB_WOW_CALLBACK
+#define CFG_DC_USB_WOW_CALLBACK 0
+#endif
+
+
+/*------------------------------------------------------------------------------
+ * Flags of Tp Enhance Mechanism
+ *------------------------------------------------------------------------------
+ */
+
+/* 1: Enable Tp Enhance Mechanism
+ * 0(default): Disable
+ */
+#ifndef CFG_SUPPORT_TPENHANCE_MODE
+#define CFG_SUPPORT_TPENHANCE_MODE          0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flags of Customization SAP Easy Mesh Mechanism
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_CCN7_SAP_EASYMESH
+#define CFG_CCN7_SAP_EASYMESH 0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flags of SAP 802.11K Support
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_AP_80211K_SUPPORT
+#define CFG_AP_80211K_SUPPORT 0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flags of SAP 802.11V Support
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_AP_80211V_SUPPORT
+#define CFG_AP_80211V_SUPPORT 0
+#endif
+
+#ifndef CFG_SUPPORT_NETIF_STOP
+#define CFG_SUPPORT_NETIF_STOP 0
+#endif
+
+#ifndef CFG_WLAN_RM_MUTEX_SUPPORT
+#define CFG_WLAN_RM_MUTEX_SUPPORT 0
+#endif
+
+/*------------------------------------------------------------------------------
+ * Flag of GKI project requirement
+ *------------------------------------------------------------------------------
+ */
+/* 1: filp_open/filp_close/kernel_read/kernel_write can't be used
+ * 0(default): can be used
+ */
+#ifndef CFG_ENABLE_GKI_SUPPORT
+#define CFG_ENABLE_GKI_SUPPORT          0
+#endif
+
+/*------------------------------------------------------------------------------
+ * External PTA debug command support
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
+#define CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND 0
+#endif
+/*------------------------------------------------------------------------------
+ * Flags of support Vendor HAL version
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_SUPPORT_OLD_VENDOR_HAL
+#define CFG_SUPPORT_OLD_VENDOR_HAL	0
 #endif
 
 /*******************************************************************************

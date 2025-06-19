@@ -798,6 +798,8 @@ void scanRemoveConnFlagOfBssDescByBssid(IN struct ADAPTER *prAdapter,
 struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 				  IN struct SW_RFB *prSwRfb);
 
+void scanRemoveAllBssDesc(IN struct ADAPTER *prAdapter);
+
 uint32_t scanProcessBeaconAndProbeResp(IN struct ADAPTER *prAdapter,
 				       IN struct SW_RFB *prSWRfb);
 

@@ -83,6 +83,7 @@
  */
 
 struct PARAM_RX_STAT g_HqaRxStat;
+struct list_mode_event g_HqaListModeStatus;
 uint32_t u4RxStatSeqNum;
 u_int8_t g_DBDCEnable = FALSE;
 /* For SA Buffer Mode Temp Solution */
@@ -356,7 +357,8 @@ static int32_t ResponseToQA(struct HQA_CMD_FRAME
 				   sizeof((HqaCmdFrame)->Sequence) +
 				   ntohs((HqaCmdFrame)->Length);
 
-	if (prIwReqData->data.length == 0)
+	if (prIwReqData->data.length == 0 ||
+	    prIwReqData->data.length > sizeof(*HqaCmdFrame))
 		return -EFAULT;
 
 	if (copy_to_user(prIwReqData->data.pointer,
@@ -1119,7 +1121,7 @@ static int32_t HQA_SetChannel(struct net_device *prNetDev,
 	DBGLOG(RFTEST, INFO,
 	       "QA_AGENT HQA_SetChannel Channel = %d\n", i4SetChan);
 
-	i4SetFreq = nicChannelNum2Freq(i4SetChan);
+	i4SetFreq = nicChannelNum2Freq(i4SetChan, BAND_NULL);
 	i4Ret = MT_ATESetChannel(prNetDev, 0, i4SetFreq);
 
 	ResponseToQA(HqaCmdFrame, prIwReqData, 2, i4Ret);
@@ -2116,6 +2118,10 @@ static int32_t HQA_MACBbpRegBulkRead(struct net_device
 	DBGLOG(RFTEST, INFO, "Offset = 0x%08x, Len = 0x%08x\n",
 				u4Offset, u2Len);
 
+	if ((2 + (u2Len * 4)) > sizeof(HqaCmdFrame->Data)) {
+		return -EINVAL;
+	}
+
 	for (u4Index = 0; u4Index < u2Len; u4Index++) {
 		rMcrInfo.u4McrOffset = u4Offset + u4Index * 4;
 		rMcrInfo.u4McrData = 0;
@@ -2184,6 +2190,11 @@ static int32_t HQA_RfRegBulkRead(struct net_device
 	else if (u4WfSel == 15)
 		u4Offset = u4Offset | 0x999F0000;
 
+	if ((2 + (u4Length * 4)) > sizeof(HqaCmdFrame->Data)
+	    || (2 + (u4Length * 4)) < u4Length) {  /*avoid integer overflow*/
+		i4Status = SERV_STATUS_AGENT_INVALID_LEN;
+		return i4Status;
+	}
 
 	for (u4Index = 0; u4Index < u4Length; u4Index++) {
 		rMcrInfo.u4McrOffset = u4Offset + u4Index * 4;
@@ -2304,6 +2315,15 @@ static int32_t HQA_ReadEEPROM(struct net_device *prNetDev,
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
 
+	/*  HQA_ReadEEPROM read size  only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR,
+			"QA_AGENT HQA_ReadEEPROM Len : %d not supported\n",
+			Len);
+		return WLAN_STATUS_FAILURE;
+	}
+
+
 #if  (CFG_EEPROM_PAGE_ACCESS == 1)
 	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prNetDev));
 	if (!prGlueInfo) {
@@ -2413,7 +2433,7 @@ static int32_t HQA_WriteEEPROM(struct net_device *prNetDev,
 	u4Index = Offset % EFUSE_BLOCK_SIZE;
 
 	if (prGlueInfo->prAdapter->rWifiVar.ucEfuseBufferModeCal ==
-	    TRUE && Offset >= 0 && Offset < MAX_EEPROM_BUFFER_SIZE - 1) {
+	    TRUE && Offset < MAX_EEPROM_BUFFER_SIZE - 1) {
 		uacEEPROMImage[Offset] = u4WriteData & 0xff;
 		uacEEPROMImage[Offset + 1] = u4WriteData >> 8 & 0xff;
 	} else if (u4Index >= EFUSE_BLOCK_SIZE - 1) {
@@ -2466,6 +2486,7 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 	struct PARAM_CUSTOM_ACCESS_EFUSE rAccessEfuseInfo;
 	uint32_t u4BufLen = 0;
 	uint8_t  u4Loop = 0;
+	uint32_t u4TotalOffset = 0;
 
 	uint16_t Buffer;
 	struct GLUE_INFO *prGlueInfo = NULL;
@@ -2492,13 +2513,31 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 
 	memcpy(&Offset, HqaCmdFrame->Data + 2 * 0, 2);
 	Offset = ntohs(Offset);
+
+	if (Offset > (MAX_EEPROM_BUFFER_SIZE - 1)) {
+		DBGLOG(INIT, ERROR, "%s Offset : %d out of range (0x%x)\n",
+			__func__, Offset, MAX_EEPROM_BUFFER_SIZE);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
+
+    /* for bulk read, only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR,
+			"QA_AGENT HQA_ReadBulkEEPROM Len : %d not supported\n",
+			Len);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	tmp = Offset;
 	DBGLOG(INIT, INFO,
 	       "QA_AGENT HQA_ReadBulkEEPROM Offset : %d\n", Offset);
 	DBGLOG(INIT, INFO, "QA_AGENT HQA_ReadBulkEEPROM Len : %d\n",
 	       Len);
+
+
 
 #if  (CFG_EEPROM_PAGE_ACCESS == 1)
 	rAccessEfuseInfo.u4Address = (Offset / EFUSE_BLOCK_SIZE) *
@@ -2537,8 +2576,17 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 		}
 #endif
 		for (u4Loop = 0; u4Loop < Len; u4Loop += 2) {
+			/* Fix coverity issue: CID11341965 */
+			u4TotalOffset = Offset + u4Loop;
+			if ((u4TotalOffset) > EFUSE_BLOCK_SIZE - 1) {
+				DBGLOG(INIT, ERROR,
+					   "%s :Block accsess out of range, Offset %d u4Loop %d\n",
+					   __func__, Offset, u4Loop);
+				return WLAN_STATUS_FAILURE;
+			}
+
 			memcpy(&Buffer, prGlueInfo->prAdapter->aucEepromVaule +
-			       Offset + u4Loop, 2);
+			       u4TotalOffset, 2);
 			Buffer = ntohs(Buffer);
 			DBGLOG(INIT, INFO,
 			       ":From Efuse  u4Loop=%d  Buffer=%x\n",
@@ -2548,12 +2596,20 @@ static int32_t HQA_ReadBulkEEPROM(struct net_device
 
 	} else {  /* Read from EEPROM */
 		for (u4Loop = 0; u4Loop < Len; u4Loop += 2) {
-			memcpy(&Buffer, uacEEPROMImage + Offset + u4Loop, 2);
+			/* Fix coverity issue: CID11353922 */
+			u4TotalOffset = Offset + u4Loop;
+			if ((u4TotalOffset) > MAX_EEPROM_BUFFER_SIZE - 1) {
+				DBGLOG(INIT, ERROR,
+					   "%s :Block accsess out of range, Offset %d u4Loop %d\n",
+					   __func__, Offset, u4Loop);
+				return WLAN_STATUS_FAILURE;
+			}
+			memcpy(&Buffer, uacEEPROMImage + u4TotalOffset, 2);
 			Buffer = ntohs(Buffer);
 			memcpy(HqaCmdFrame->Data + 2 + u4Loop, &Buffer, 2);
 			DBGLOG(INIT, INFO,
 			       "QA_AGENT HQA_ReadBulkEEPROM u4Loop=%d  u4Value=%x\n",
-			       u4Loop, uacEEPROMImage[Offset + u4Loop]);
+			       u4Loop, uacEEPROMImage[u4TotalOffset]);
 		}
 	}
 #endif
@@ -2632,13 +2688,14 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 	uint32_t u4BufLen = 0;
 	struct PARAM_CUSTOM_ACCESS_EFUSE rAccessEfuseInfoRead,
 		       rAccessEfuseInfoWrite;
-	uint16_t testBuffer1, testBuffer2, testBuffer;
+	uint16_t testBuffer1 = 0, testBuffer2 = 0, testBuffer = 0;
 	uint16_t	*Buffer = NULL;
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 	uint8_t  u4Loop = 0, u4Index = 0;
 	uint16_t ucTemp2;
 	uint16_t i = 0;
+	uint32_t u4TotalOffset = 0;
 
 	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prNetDev));
 	prAdapter = prGlueInfo->prAdapter;
@@ -2653,12 +2710,28 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 
 	memcpy(&Offset, HqaCmdFrame->Data + 2 * 0, 2);
 	Offset = ntohs(Offset);
+
+	if (Offset > (MAX_EEPROM_BUFFER_SIZE - 1)) {
+		DBGLOG(INIT, ERROR, "%s Offset : %d out of range (0x%x)\n",
+			__func__, Offset, MAX_EEPROM_BUFFER_SIZE);
+		return WLAN_STATUS_FAILURE;
+	}
+
 	memcpy(&Len, HqaCmdFrame->Data + 2 * 1, 2);
 	Len = ntohs(Len);
+    /* for bulk access, only 16 bytes is used */
+	if (Len > EFUSE_BLOCK_SIZE) {
+		DBGLOG(INIT, ERROR, "%s Len : %d not supported\n",
+			__func__, Len);
+		return WLAN_STATUS_FAILURE;
+	}
 
-	memcpy(&testBuffer1, HqaCmdFrame->Data + 2 * 2, Len);
-	testBuffer2 = ntohs(testBuffer1);
-	testBuffer = ntohs(testBuffer1);
+	/* Fix coverity issue: CID10772608 */
+	if (Len <= 2) {
+		memcpy(&testBuffer1, HqaCmdFrame->Data + 2 * 2, Len);
+		testBuffer2 = ntohs(testBuffer1);
+		testBuffer = ntohs(testBuffer1);
+	}
 
 	DBGLOG(INIT, INFO, "Offset : %x, Len : %u\n", Offset, Len);
 
@@ -2682,8 +2755,7 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 		}
 
 		if (prGlueInfo->prAdapter->rWifiVar.ucEfuseBufferModeCal ==
-		    TRUE &&
-		    Offset >= 0 && Offset < MAX_EEPROM_BUFFER_SIZE - 1) {
+		    TRUE && Offset < MAX_EEPROM_BUFFER_SIZE - 1) {
 			/* EEPROM */
 			DBGLOG(INIT, INFO, "Direct EEPROM buffer, offset=%x\n",
 			       Offset);
@@ -2787,10 +2859,19 @@ static int32_t HQA_WriteBulkEEPROM(struct net_device
 			memcpy(uacEEPROMImage + Offset, &ucTemp2, Len);
 		} else {
 			for (i = 0 ; i < 8 ; i++) {
+				/* Fix coverity issue: CID10708595 */
+				u4TotalOffset = Offset + 2 * i;
+				if (u4TotalOffset >
+				    MAX_EEPROM_BUFFER_SIZE - 1) {
+					DBGLOG(INIT, ERROR,
+					"%s u4TotalOffset : %d not supported\n",
+						__func__, u4TotalOffset);
+					return WLAN_STATUS_FAILURE;
+				}
 				memcpy(&ucTemp2,
 				       HqaCmdFrame->Data + 2 * 2 + 2 * i, 2);
 				ucTemp2 = ntohs(ucTemp2);
-				memcpy(uacEEPROMImage + Offset + 2 * i,
+				memcpy(uacEEPROMImage + u4TotalOffset,
 				       &ucTemp2, 2);
 			}
 
@@ -3409,7 +3490,7 @@ static int32_t HQA_DBDCContinuousTX(struct net_device
 
 	if (u4Control) {
 		MT_ATESetDBDCBandIndex(prNetDev, u4Band);
-		u4Freq = nicChannelNum2Freq(u4Central_Ch);
+		u4Freq = nicChannelNum2Freq(u4Central_Ch, u4Band);
 		MT_ATESetChannel(prNetDev, 0, u4Freq);
 		ucPriChOffset = _whPhyGetPrimChOffset(u4BW,
 						      u4Pri_Ch,
@@ -8290,6 +8371,7 @@ int32_t connacSetICapStart(struct GLUE_INFO *prGlueInfo,
 	prICapInfo->u4EnBitWidth = 0;
 	prICapInfo->u4Architech = 1;
 	prICapInfo->u4PhyIdx = 0;
+	prICapInfo->u4CapSource = 0;
 #if (CFG_MTK_ANDROID_EMI == 1)
 	prICapInfo->u4EmiStartAddress =
 		(uint32_t) (gConEmiPhyBaseFinal & 0xFFFFFFFF);
@@ -8371,38 +8453,6 @@ int32_t connacGetICapStatus(struct GLUE_INFO *prGlueInfo)
 
 	DBGLOG(RFTEST, INFO, "QA_AGENT HQA_CapWiFiSpectrum Wait!!!!!!!!!!!!\n");
 	return 1;
-}
-
-int32_t commonGetICapIQData(struct GLUE_INFO *prGlueInfo,
-			    uint8_t *pData, uint32_t u4IQType, uint32_t u4WFNum)
-{
-	struct ADAPTER *prAdapter;
-	uint32_t u4TempLen = 0;
-	uint32_t u4DataLen = 0;
-	int32_t *prIQAry;
-	int32_t i = 0;
-
-	ASSERT(prGlueInfo);
-	prAdapter = prGlueInfo->prAdapter;
-	ASSERT(prAdapter);
-
-	if (u4WFNum <= 1) {
-		GetIQData(prAdapter, &prIQAry, &u4DataLen, u4IQType,
-			  u4WFNum);
-		u4TempLen = u4DataLen;
-		u4DataLen /= 4;
-
-		u4DataLen = ntohl(u4DataLen);
-		memcpy(pData + 2 + 4 * 3, (uint8_t *) &u4DataLen,
-		       sizeof(u4DataLen));
-
-		for (i = 0; i < u4TempLen / sizeof(uint32_t); i++)
-			prIQAry[i] = ntohl(prIQAry[i]);
-
-		memcpy(pData + 2 + 4 * 4, (uint8_t *) &prIQAry[0],
-		       u4TempLen);
-	}
-	return u4TempLen;
 }
 
 int32_t connacGetICapIQData(struct GLUE_INFO *prGlueInfo,
@@ -8574,12 +8624,12 @@ static int32_t hqa_set_channel_ext(struct net_device
 	} else if (u4Central_ch0 == 6 && u4Ch_band == 1) {
 		u4SetFreq = 1000 * 5032;
 	} else {
-		u4SetFreq = nicChannelNum2Freq(u4Central_ch0);
+		u4SetFreq = nicChannelNum2Freq(u4Central_ch0, BAND_NULL);
 	}
 	MT_ATESetChannel(prNetDev, 0, u4SetFreq);
 
 	if (u4Sys_bw == 6) {
-		u4SetFreq = nicChannelNum2Freq(u4Central_ch1);
+		u4SetFreq = nicChannelNum2Freq(u4Central_ch1, BAND_NULL);
 		MT_ATESetChannel(prNetDev, 1, u4SetFreq);
 	}
 
@@ -9578,7 +9628,8 @@ int priv_qa_agent(IN struct net_device *prNetDev,
 	if (prGlueInfo->prAdapter->fgTestMode == FALSE)
 		MT_ATEStart(prNetDev, "ATESTART");
 
-	if (!prIwReqData || prIwReqData->data.length == 0) {
+	if (!prIwReqData || prIwReqData->data.length == 0 ||
+		prIwReqData->data.length > sizeof(*HqaCmdFrame)) {
 		i4Status = -EINVAL;
 		goto ERROR0;
 	}
@@ -9591,6 +9642,10 @@ int priv_qa_agent(IN struct net_device *prNetDev,
 	}
 
 	memset(HqaCmdFrame, 0, sizeof(*HqaCmdFrame));
+
+	if (prIwReqData->data.length > sizeof(*HqaCmdFrame))
+		prIwReqData->data.length = sizeof(*HqaCmdFrame);
+
 	if (copy_from_user(HqaCmdFrame, prIwReqData->data.pointer,
 			   prIwReqData->data.length)) {
 		i4Status = -EFAULT;
@@ -9622,6 +9677,10 @@ int priv_qa_agent(IN struct net_device *prNetDev,
 				+ sizeof((HqaCmdFrame)->Length)
 				+ sizeof((HqaCmdFrame)->Sequence)
 				+ ntohs((HqaCmdFrame)->Length);
+
+			if (prIwReqData->data.length == 0 ||
+			    prIwReqData->data.length > sizeof(*HqaCmdFrame))
+				return -EFAULT;
 
 			if (copy_to_user(prIwReqData->data.pointer
 				, (uint8_t *) (HqaCmdFrame)

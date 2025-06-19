@@ -205,6 +205,9 @@ static int btmtk_service_main_thread(void *data)
 				if (ret) {
 					BTMTK_ERR("btmtk_sdio_reset_dongle return %d, error", ret);
 					break;
+				} else {
+					BTMTK_INFO("hw reset dongle done");
+					break;
 				}
 			}
 		}

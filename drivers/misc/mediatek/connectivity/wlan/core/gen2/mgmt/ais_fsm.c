@@ -343,7 +343,7 @@ VOID aisFsmInit(IN P_ADAPTER_T prAdapter)
 	kalMemZero(&prAisSpecificBssInfo->rBTMParam, sizeof(prAisSpecificBssInfo->rBTMParam));
 
 #if (CFG_REFACTORY_PMKSA == 1)
-	LINK_INITIALIZE(&prAisSpecificBssInfo->rPmkidCache);
+	LINK_INITIALIZE(&prAisBssInfo->rPmkidCache);
 #endif
 
 	/* DBGPRINTF("[2] ucBmpDeliveryAC:0x%x, ucBmpTriggerAC:0x%x, ucUapsdSp:0x%x", */
@@ -3280,7 +3280,7 @@ VOID
 aisIndicationOfMediaStateToHost(IN P_ADAPTER_T prAdapter,
 				ENUM_PARAM_MEDIA_STATE_T eConnectionState, BOOLEAN fgDelayIndication)
 {
-	EVENT_CONNECTION_STATUS rEventConnStatus;
+	EVENT_CONNECTION_STATUS rEventConnStatus = {'\0'};
 	P_CONNECTION_SETTINGS_T prConnSettings;
 	P_BSS_INFO_T prAisBssInfo;
 	P_AIS_FSM_INFO_T prAisFsmInfo;

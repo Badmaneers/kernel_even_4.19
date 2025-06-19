@@ -81,6 +81,7 @@
  *                             D A T A   T Y P E S
  *******************************************************************************
  */
+#define INFINITE_PNO_INTERVAL 99
 
 /*******************************************************************************
  *                            P U B L I C   D A T A
@@ -268,8 +269,10 @@ void scnSendScanReqV2(IN struct ADAPTER *prAdapter)
 	prCmdScanReq->ucSSIDType = prScanParam->ucSSIDType;
 	prCmdScanReq->auVersion[0] = 1;
 	prCmdScanReq->ucScnFuncMask |= prScanParam->ucScnFuncMask;
+
 	if (kalIsValidMacAddr(prScanParam->aucRandomMac)) {
-		prCmdScanReq->ucScnFuncMask |= ENUM_SCN_RANDOM_MAC_EN;
+		prCmdScanReq->ucScnFuncMask |= (ENUM_SCN_RANDOM_MAC_EN |
+						ENUM_SCN_RANDOM_SN_EN);
 		kalMemCopy(prCmdScanReq->aucRandomMac,
 			prScanParam->aucRandomMac, MAC_ADDR_LEN);
 	}
@@ -362,9 +365,29 @@ void scnSendScanReqV2(IN struct ADAPTER *prAdapter)
 		}
 	}
 
+#if CFG_SUPPORT_SCHED_SCAN
+	/* if cus Dwell time is not zero, update to firmware */
+	if (prAdapter->u2ChannelCusDwellTime != 0)
+		prCmdScanReq->u2ChannelDwellTime =
+			prAdapter->u2ChannelCusDwellTime;
+	else
+		prCmdScanReq->u2ChannelDwellTime =
+			prScanParam->u2ChannelDwellTime;
+
+	/* if cus min dwell time is not zero, update to firmware */
+	if (prAdapter->u2ChannelCusMinDwellTime != 0) {
+		prCmdScanReq->u2ChannelMinDwellTime =
+			prAdapter->u2ChannelCusMinDwellTime;
+	} else {
+		prCmdScanReq->u2ChannelMinDwellTime =
+			prScanParam->u2ChannelMinDwellTime;
+	}
+#else
 	prCmdScanReq->u2ChannelDwellTime = prScanParam->u2ChannelDwellTime;
 	prCmdScanReq->u2ChannelMinDwellTime =
 		prScanParam->u2ChannelMinDwellTime;
+#endif
+
 	prCmdScanReq->u2TimeoutValue = prScanParam->u2TimeoutValue;
 
 	if (prScanParam->u2IELen <= MAX_IE_LENGTH)
@@ -1234,6 +1257,18 @@ scnFsmSchedScanRequest(IN struct ADAPTER *prAdapter,
 
 	scnSetSchedScanPlan(prAdapter, prSchedScanCmd);
 
+#if CFG_SUPPORT_WAKE_ON_PNO
+	/* Set RSSI threshold for PNO wake up*/
+	prSchedScanCmd->rRSSIThreshold = prAdapter->i4RssiThreshold;
+
+	prSchedScanCmd->u2ChannelMinDwellTime =
+		prAdapter->u2ChannelCusMinDwellTime;
+	prSchedScanCmd->u2ChannelDwellTime =
+		prAdapter->u2ChannelCusDwellTime;
+	prSchedScanCmd->u2ChannelPassiveTime =
+		prAdapter->u2ChannelCusPassiveDwellTime;
+#endif
+
 	log_dbg(SCN, INFO, "V(%u)seq(%u)sz(%zu)chT(%u)chN(%u)ssid(%u)match(%u)IE(%u=>%u)MSP(%u)Func(0x%X)\n",
 		prSchedScanCmd->ucVersion,
 		prSchedScanCmd->ucSeqNum, sizeof(struct CMD_SCHED_SCAN_REQ),
@@ -1400,6 +1435,24 @@ scnSetSchedScanPlan(IN struct ADAPTER *prAdapter,
 	prSchedScanCmd->ucMspEntryNum = 0;
 	kalMemZero(prSchedScanCmd->au2MspList,
 			sizeof(prSchedScanCmd->au2MspList));
+
+	/* if customized the ucCusMspEntryNum, */
+	/* update the value and prepare send to fw */
+	if (prAdapter->ucCusMspEntryNum != 0) {
+		prSchedScanCmd->ucMspEntryNum = prAdapter->ucCusMspEntryNum;
+		if (prAdapter->ucCusMspEntryNum == INFINITE_PNO_INTERVAL)
+			prSchedScanCmd->au2MspList[0] =
+				prAdapter->au2CusMspList[0];
+		else {
+			kalMemCopy(prSchedScanCmd->au2MspList,
+				prAdapter->au2CusMspList,
+				sizeof(prSchedScanCmd->au2MspList));
+		}
+		log_dbg(SCN, ERROR, "scnSetSchedScanPlan, ucMspEntryNum is %d and first interval is %d\n",
+			prSchedScanCmd->ucMspEntryNum,
+			prSchedScanCmd->au2MspList[0]);
+	}
+
 }
 
 #endif /* CFG_SUPPORT_SCHED_SCAN */

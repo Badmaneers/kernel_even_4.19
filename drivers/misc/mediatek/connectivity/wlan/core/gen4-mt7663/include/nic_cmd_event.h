@@ -773,6 +773,8 @@ enum ENUM_EVENT_ID {
 #define WOWLAN_DETECT_TYPE_DISCONNECT          BIT(2)
 #define WOWLAN_DETECT_TYPE_GTK_REKEY_FAILURE  BIT(3)
 #define WOWLAN_DETECT_TYPE_BCN_LOST            BIT(4)
+#define WOWLAN_DETECT_TYPE_PNO_MATCH_SSID      BIT(5)
+
 
 /* Wakeup command bit define */
 #define PF_WAKEUP_CMD_BIT0_OUTPUT_MODE_EN   BIT(0)
@@ -854,6 +856,10 @@ enum ENUM_PF_OPCODE {
 
 enum ENUM_SCN_FUNC_MASK {
 	ENUM_SCN_RANDOM_MAC_EN = (1 << 0),
+	ENUM_SCN_DBDC_SCAN_DIS = (1 << 1),
+	ENUM_SCN_DBDC_SCAN_TYPE3 = (1 << 2),
+	ENUM_SCN_USE_PADDING_AS_BSSID = (1 << 3),
+	ENUM_SCN_RANDOM_SN_EN = (1 << 4),
 };
 
 enum ENUM_WOW_WAKEUP_REASON {
@@ -871,6 +877,10 @@ enum ENUM_WOW_WAKEUP_REASON {
 	ENUM_PF_CMD_TYPE_IPV6_UDP                      = 11,
 	ENUM_PF_CMD_TYPE_IPV6_TCP                      = 12,
 	ENUM_PF_CMD_TYPE_BEACON_LOST                   = 13,
+	ENUM_PF_CMD_TYPE_IPV6_ICMP                     = 14,
+	ENUM_PF_CMD_TYPE_ANY_UC2M                      = 15,
+	ENUM_PF_CMD_TYPE_FFS                           = 16,
+	ENUM_PF_CMD_TYPE_PNO_MATCH_SSID                = 17,
 	ENUM_PF_CMD_TYPE_UNDEFINED                     = 255,
 };
 
@@ -1960,7 +1970,12 @@ struct CMD_ANT_DIV_CTRL {
 struct CMD_FW_LOG_2_HOST_CTRL {
 	uint8_t ucFwLog2HostCtrl;
 	uint8_t ucMcuDest;
+#if CFG_SUPPORT_FW_DBG_LEVEL_CTRL
+	uint8_t ucFwLogLevel;
+	uint8_t ucReserve;
+#else
 	uint8_t ucReserve[2];
+#endif
 };
 
 struct CMD_CHIP_CONFIG {
@@ -3256,7 +3271,7 @@ struct CMD_SET_DEVICE_MODE {
 #define CMD_NOISE_HISTOGRAM_TYPE2 (0x51)
 #endif
 #define CMD_ADMINCTRL_CONFIG_TYPE (0x6)
-#ifdef CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
+#if CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
 #define CMD_EXT_PTA_CONFIG_TYPE (0x7)
 #endif
 
@@ -3286,7 +3301,7 @@ struct CMD_SET_DEVICE_MODE {
 #define CMD_PTA_CONFIG_COMM_ACT_BT_WF1_INBAND (1<<17)
 #define CMD_PTA_CONFIG_COMM_ACT_BT_WF1_OUTBAND (1<<18)
 
-#ifdef CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
+#if CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
 /* ext pta config related mask */
 #define CMD_EXT_PTA_CONFIG_EXT_PTA (1<<0)
 #define CMD_EXT_PTA_CONFIG_HI_RX_TAG (1<<1)
@@ -3378,7 +3393,7 @@ struct CMD_PTA_CONFIG {
 	uint32_t u4CoexMode;
 };
 
-#ifdef CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
+#if CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
 struct CMD_EXT_PTA_CONFIG {
 	uint16_t u2Type;
 	uint16_t u2Len;
@@ -3396,6 +3411,9 @@ struct CMD_EXT_PTA_CONFIG {
 	uint32_t u4CommActZbWf0Hsf;
 	uint32_t u4CommActZbWf1Hsf;
 	/* used in get */
+	uint32_t u4BtTag;
+	uint32_t u4Wf0Tag;
+	uint32_t u4Wf1Tag;
 	uint32_t u4ZbGntCnt;
 	uint32_t u4ZbAbtCnt;
 	uint32_t u4ZbLoTxReqCnt;
@@ -3719,6 +3737,15 @@ struct CMD_SCHED_SCAN_REQ {
 	struct CHANNEL_INFO aucChannel[64];
 	uint16_t au2MspList[10];
 	uint8_t aucPadding_3[64];
+
+#if CFG_SUPPORT_WAKE_ON_PNO
+	/*PNO wake up threshold */
+	int32_t rRSSIThreshold;
+	/* Dwell time and passive listen time  */
+	uint16_t u2ChannelMinDwellTime;
+	uint16_t u2ChannelDwellTime;
+	uint16_t u2ChannelPassiveTime;
+#endif
 
 	/* keep last */
 	uint8_t aucIE[0];             /* MUST be the last for IE content */

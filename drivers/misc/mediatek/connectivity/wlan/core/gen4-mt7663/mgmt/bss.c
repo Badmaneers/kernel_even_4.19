@@ -112,6 +112,10 @@ struct APPEND_VAR_IE_ENTRY txBcnIETable[] = {
 	   rlmRspGenerateHtCapIE}	/* 45 */
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_HT_OP), NULL,
 	   rlmRspGenerateHtOpIE}	/* 61 */
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_RRM_CAP), NULL,
+	   rlmGenerateApRRMEnabledCapIE} /* 70 */
+#endif /* CFG_AP_80211K_SUPPORT */
 #if CFG_ENABLE_WIFI_DIRECT
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_OBSS_SCAN), NULL,
 	   rlmRspGenerateObssScanIE}	/* 74 */
@@ -166,7 +170,13 @@ struct APPEND_VAR_IE_ENTRY txProbRspIETable[] = {
 	   rlmRspGenerateHtCapIE}	/* 45 */
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_HT_OP), NULL,
 	   rlmRspGenerateHtOpIE}	/* 61 */
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_RRM_CAP), NULL,
+	   rlmGenerateApRRMEnabledCapIE} /* 70 */
+#endif /* CFG_AP_80211K_SUPPORT */
 #if CFG_ENABLE_WIFI_DIRECT
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_WPA), NULL,
+	   rsnGenerateWPAIE}	/* 221 */
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL,
 	   rsnGenerateRSNIE}	/* 48 */
 	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_OBSS_SCAN), NULL,
@@ -1339,6 +1349,11 @@ uint32_t bssProcessProbeRequest(IN struct ADAPTER *prAdapter,
 	uint32_t u4CtrlFlagsForProbeResp = 0;
 	enum ENUM_BAND eBand;
 	uint8_t ucHwChannelNum;
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+	uint8_t ucIndex;
+	struct T_MULTI_AP_STA_UNASSOC_METRICS *prUnAssocSTA;
+	uint8_t aucNullAddr[] = NULL_MAC_ADDR;
+#endif
 
 	ASSERT(prSwRfb);
 
@@ -1388,7 +1403,9 @@ uint32_t bssProcessProbeRequest(IN struct ADAPTER *prAdapter,
 		}
 #if CFG_ENABLE_WIFI_DIRECT
 		else if ((prAdapter->fgIsP2PRegistered)
-			 && (prBssInfo->eNetworkType == NETWORK_TYPE_P2P)) {
+			 && (prBssInfo->eNetworkType == NETWORK_TYPE_P2P)
+			 && (prAdapter->rP2PNetRegState
+				== ENUM_NET_REG_STATE_REGISTERED)) {
 
 			fgReplyProbeResp =
 			    p2pFuncValidateProbeReq(prAdapter, prSwRfb,
@@ -1397,6 +1414,29 @@ uint32_t bssProcessProbeRequest(IN struct ADAPTER *prAdapter,
 						     prAdapter->ucP2PDevBssIdx),
 						    (uint8_t)
 						    prBssInfo->u4PrivateData);
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+			for (ucIndex = 0;
+				ucIndex < SAP_UNASSOC_METRICS_STA_MAX;
+				ucIndex++) {
+				prUnAssocSTA =
+					&prBssInfo->arUnAssocSTA[ucIndex];
+
+				if (EQUAL_MAC_ADDR(prUnAssocSTA->mStaMac,
+					prMgtHdr->aucSrcAddr)
+					&& UNEQUAL_MAC_ADDR(aucNullAddr,
+					prMgtHdr->aucSrcAddr)) {
+					prUnAssocSTA->iRssi =
+						RCPI_TO_dBm(
+						(HAL_RX_VECTOR_GET_RX_VECTOR(
+						prSwRfb->prRxStatusGroup3, 3)
+						& RX_VT_RCPI0_MASK)
+						>> RX_VT_RCPI0_OFFSET);
+					prUnAssocSTA->u8Channel =
+						prBssInfo->ucPrimaryChannel;
+					prUnAssocSTA->uTime = kalGetTimeTick();
+				}
+			}
+#endif
 		}
 #endif
 #if CFG_ENABLE_BT_OVER_WIFI
@@ -2294,6 +2334,9 @@ void bssInitForAP(IN struct ADAPTER *prAdapter, IN struct BSS_INFO *prBssInfo,
 
 	if (prBssInfo->fgUseShortSlotTime)
 		prBssInfo->u2CapInfo |= CAP_INFO_SHORT_SLOT_TIME;
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+	prBssInfo->u2CapInfo |= CAP_INFO_RADIO_MEASUREMENT;
+#endif /* CFG_AP_80211K_SUPPORT */
 #endif
 	/* 4 <6> Find Lowest Basic Rate Index for default TX Rate of MMPDU */
 	nicTxUpdateBssDefaultRate(prBssInfo);

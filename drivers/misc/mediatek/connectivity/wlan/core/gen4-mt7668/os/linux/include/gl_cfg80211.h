@@ -202,6 +202,8 @@ int
 mtk_cfg80211_get_link_statistics(struct wiphy *wiphy, struct net_device *ndev, u8 *mac, struct station_info *sinfo);
 
 int mtk_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request);
+void mtk_cfg80211_abort_scan(struct wiphy *wiphy, struct wireless_dev *wdev);
+
 
 #if CFG_SUPPORT_CFG80211_AUTH
 int mtk_cfg80211_auth(struct wiphy *wiphy, struct net_device *ndev,
@@ -215,6 +217,8 @@ int mtk_cfg80211_disconnect(struct wiphy *wiphy, struct net_device *ndev, u16 re
 #if CFG_SUPPORT_CFG80211_AUTH
 int mtk_cfg80211_deauth(struct wiphy *wiphy, struct net_device *ndev,
 			struct cfg80211_deauth_request *req);
+int mtk_cfg80211_disassoc(struct wiphy *wiphy, struct net_device *ndev,
+			struct cfg80211_disassoc_request *req);
 #endif
 
 int mtk_cfg80211_join_ibss(struct wiphy *wiphy, struct net_device *ndev, struct cfg80211_ibss_params *params);
@@ -289,7 +293,13 @@ int
 mtk_cfg80211_sched_scan_start(IN struct wiphy *wiphy,
 			      IN struct net_device *ndev, IN struct cfg80211_sched_scan_request *request);
 
+#if KERNEL_VERSION(4, 14, 0) <= CFG80211_VERSION_CODE
+int mtk_cfg80211_sched_scan_stop(IN struct wiphy *wiphy,
+		IN struct net_device *ndev,
+		IN u64 reqid);
+#else
 int mtk_cfg80211_sched_scan_stop(IN struct wiphy *wiphy, IN struct net_device *ndev);
+#endif
 
 int mtk_cfg80211_assoc(struct wiphy *wiphy, struct net_device *ndev, struct cfg80211_assoc_request *req);
 

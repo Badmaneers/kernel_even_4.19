@@ -95,7 +95,7 @@ APPEND_VAR_IE_ENTRY_T txBcnIETable[] = {
 #if CFG_SUPPORT_MTK_SYNERGY
 	, {(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE}	/* 221 */
 #endif
-
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL, rsnGenerateRSNXIE}	/* 244 */
 };
 
 APPEND_VAR_IE_ENTRY_T txProbRspIETable[] = {
@@ -117,7 +117,7 @@ APPEND_VAR_IE_ENTRY_T txProbRspIETable[] = {
 #if CFG_SUPPORT_MTK_SYNERGY
 	, {(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE}	/* 221 */
 #endif
-
+	, {(ELEM_HDR_LEN + ELEM_MAX_LEN_RSN), NULL, rsnGenerateRSNXIE}   /* 244 */
 };
 
 #endif /* CFG_SUPPORT_ADHOC || CFG_SUPPORT_AAA */
@@ -1569,6 +1569,10 @@ BOOLEAN bssRemoveClient(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo, IN 
 
 	LINK_FOR_EACH_ENTRY(prCurrStaRec, prClientList, rLinkEntry, STA_RECORD_T) {
 
+		/*Beak to check client list*/
+		if (!prCurrStaRec)
+			break;
+
 		if (prCurrStaRec == prStaRec) {
 
 			LINK_REMOVE_KNOWN_ENTRY(prClientList, &prStaRec->rLinkEntry);
@@ -2122,7 +2126,7 @@ VOID bssInitForAP(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo, IN BOOLEA
 {
 	P_AC_QUE_PARMS_T prACQueParms;
 
-	ENUM_WMM_ACI_T eAci;
+	enum ENUM_WMM_ACI_T eAci;
 
 	UINT_8 auCWminLog2ForBcast[WMM_AC_INDEX_NUM] = { 4 /*BE*/, 4 /*BK*/, 3 /*VO*/, 2 /*VI*/ };
 	UINT_8 auCWmaxLog2ForBcast[WMM_AC_INDEX_NUM] = { 10, 10, 4, 3 };

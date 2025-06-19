@@ -965,9 +965,8 @@ u_int8_t wmmParseQosAction(IN struct ADAPTER *prAdapter,
 					rStepParam.ucApsd =
 						rTspec.rTsInfo.ucApsd;
 				} else {
-					DBGLOG(WMM, INFO,
+					DBGLOG(WMM, WARN,
 					       "can't parse Tspec IE?!\n");
-					ASSERT(FALSE);
 				}
 				break;
 			default:
@@ -1037,6 +1036,12 @@ u_int8_t wmmParseTspecIE(struct ADAPTER *prAdapter, uint8_t *pucIE,
 		struct IE_WMM_TSPEC *prIeWmmTspec =
 			(struct IE_WMM_TSPEC *)pucIE;
 		uint8_t aucWfaOui[] = VENDOR_OUI_WFA;
+
+		/* WMM TSPEC length */
+		if (prIeWmmTspec->ucLength < ELEM_MAX_LEN_WMM_TSPEC) {
+			DBGLOG(WMM, INFO, "Abnormal IE length\n");
+			return FALSE;
+		}
 
 		if (prIeWmmTspec->ucId != ELEM_ID_VENDOR ||
 		    kalMemCmp(prIeWmmTspec->aucOui, aucWfaOui,

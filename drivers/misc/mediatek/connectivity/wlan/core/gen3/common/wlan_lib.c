@@ -1248,8 +1248,8 @@ VOID wlanIST(IN P_ADAPTER_T prAdapter)
 
 	nicProcessIST(prAdapter);
 
-	if (KAL_WAKE_LOCK_ACTIVE(prAdapter, &prAdapter->prGlueInfo->rIntrWakeLock))
-		KAL_WAKE_UNLOCK(prAdapter, &prAdapter->prGlueInfo->rIntrWakeLock);
+	if (KAL_WAKE_LOCK_ACTIVE(prAdapter, prAdapter->prGlueInfo->rIntrWakeLock))
+		KAL_WAKE_UNLOCK(prAdapter, prAdapter->prGlueInfo->rIntrWakeLock);
 
 #if !defined(MT6631)
 	nicEnableInterrupt(prAdapter);
@@ -5131,7 +5131,7 @@ wlanoidQueryBssStatistics(IN P_ADAPTER_T prAdapter,
 	P_STA_RECORD_T prStaRec;
 	WLAN_STATUS rResult = WLAN_STATUS_FAILURE;
 	UINT_8 ucBssIndex;
-	ENUM_WMM_ACI_T eAci;
+	enum ENUM_WMM_ACI_T eAci;
 
 	DEBUGFUNC("wlanoidQueryBssStatistics");
 
@@ -5196,7 +5196,7 @@ VOID wlanDumpBssStatistics(IN P_ADAPTER_T prAdapter, UINT_8 ucBssIdx)
 {
 	P_BSS_INFO_T prBssInfo;
 	P_STA_RECORD_T prStaRec;
-	ENUM_WMM_ACI_T eAci;
+	enum ENUM_WMM_ACI_T eAci;
 	WIFI_WMM_AC_STAT_T arLLStats[WMM_AC_INDEX_NUM];
 	UINT_8 ucIdx;
 
@@ -5287,7 +5287,7 @@ WLAN_STATUS wlanQueryStaStatistics(IN P_ADAPTER_T prAdapter, IN PVOID pvQueryBuf
 	P_QUE_MGT_T prQM = &prAdapter->rQM;
 	CMD_GET_STA_STATISTICS_T rQueryCmdStaStatistics;
 	UINT_8 ucIdx;
-	ENUM_WMM_ACI_T eAci;
+	enum ENUM_WMM_ACI_T eAci;
 
 	DEBUGFUNC("wlanoidQueryStaStatistics");
 	do {
@@ -5921,6 +5921,11 @@ VOID wlanInitFeatureOption(IN P_ADAPTER_T prAdapter)
 	prWifiVar->ePowerMode = (PARAM_POWER_MODE) wlanCfgGetUint32(prAdapter, "PowerSave", Param_PowerModeMax);
 	prWifiVar->rScanInfo.rScanParam.u2DefaultDwellTime =
 	    (UINT_16)wlanCfgGetUint32(prAdapter, "DefaultDwellTime", 0);
+
+	/* add cfg from RegInfo */
+	prWifiVar->fgDisRoaming =
+		(uint32_t) wlanCfgGetUint32(prAdapter, "DisRoaming", 0);
+
 #ifdef CFG_SUPPORT_DATA_STALL
 	prWifiVar->u4PerHighThreshold = (uint32_t) wlanCfgGetUint32(
 			prAdapter, "PerHighThreshold",
@@ -7030,7 +7035,7 @@ VOID wlanUpdateTxStatistics(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInf
 {
 	P_STA_RECORD_T prStaRec;
 	P_BSS_INFO_T prBssInfo;
-	ENUM_WMM_ACI_T eAci = WMM_AC_BE_INDEX;
+	enum ENUM_WMM_ACI_T eAci = WMM_AC_BE_INDEX;
 	P_QUE_MGT_T prQM = &prAdapter->rQM;
 	OS_SYSTIME rCurTime;
 
@@ -7077,7 +7082,7 @@ VOID wlanUpdateTxStatistics(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInf
 VOID wlanUpdateRxStatistics(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 {
 	P_STA_RECORD_T prStaRec;
-	ENUM_WMM_ACI_T eAci = WMM_AC_BE_INDEX;
+	enum ENUM_WMM_ACI_T eAci = WMM_AC_BE_INDEX;
 
 	eAci = aucTid2ACI[prSwRfb->ucTid];
 	if (eAci < 0)

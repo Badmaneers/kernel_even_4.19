@@ -411,6 +411,11 @@ typedef struct _NLO_PARAM_T {	/* Used by SCAN FSM */
 
 } NLO_PARAM_T, *P_NLO_PARAM_T;
 
+struct SCHED_SCAN_INFO_T {
+	UINT_8 ucSeqNum;
+	UINT_8 ucBssIndex;
+};
+
 typedef struct _SCAN_INFO_T {
 	ENUM_SCAN_STATE_T eCurrentState;	/* Store the STATE variable of SCAN FSM */
 
@@ -418,6 +423,11 @@ typedef struct _SCAN_INFO_T {
 
 	SCAN_PARAM_T rScanParam;
 	NLO_PARAM_T rNloParam;
+#if CFG_SUPPORT_SCHED_SCAN
+	BOOLEAN fgIsSchedScanning;
+	struct SCHED_SCAN_INFO_T rSchedScanInfo;
+	PARAM_SCHED_SCAN_REQUEST rSchedScanRequest;
+#endif
 
 	UINT_32 u4NumOfBssDesc;
 
@@ -642,6 +652,8 @@ VOID scanRemoveConnFlagOfBssDescByBssid(IN P_ADAPTER_T prAdapter, IN UINT_8 aucB
 /* BSS-DESC Insertion - ALTERNATIVE */
 P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb);
 
+VOID scanRemoveAllBssDesc(IN P_ADAPTER_T prAdapter);
+
 WLAN_STATUS scanProcessBeaconAndProbeResp(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSWRfb);
 
 VOID
@@ -684,6 +696,9 @@ VOID scnEventScanDone(IN P_ADAPTER_T prAdapter, IN P_EVENT_SCAN_DONE prScanDone,
 
 VOID scnEventNloDone(IN P_ADAPTER_T prAdapter, IN P_EVENT_NLO_DONE_T prNloDone);
 
+VOID scnEventSchedScanDone(IN P_ADAPTER_T prAdapter,
+	IN struct EVENT_SCHED_SCAN_DONE_T *prSchedScanDone);
+
 /*----------------------------------------------------------------------------*/
 /* Mailbox Message Handling                                                   */
 /*----------------------------------------------------------------------------*/
@@ -720,8 +735,8 @@ BOOLEAN scnQuerySparseChannel(IN P_ADAPTER_T prAdapter, P_ENUM_BAND_T prSparseBa
 /*----------------------------------------------------------------------------*/
 BOOLEAN
 scnFsmSchedScanRequest(IN P_ADAPTER_T prAdapter,
-		       IN UINT_8 ucSsidNum,
-		       IN P_PARAM_SSID_T prSsid, IN UINT_32 u4IeLength, IN PUINT_8 pucIe, IN UINT_16 u2Interval);
+			IN P_PARAM_SCHED_SCAN_REQUEST prRequest);
+
 
 BOOLEAN scnFsmSchedScanStopRequest(IN P_ADAPTER_T prAdapter);
 

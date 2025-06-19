@@ -72,6 +72,7 @@
 */
 #include "precomp.h"
 #include "gl_ate_agent.h"
+#include "gl_vendor.h"
 
 /*******************************************************************************
 *                              C O N S T A N T S
@@ -832,8 +833,13 @@ VOID nicCmdEventEnterRfTest(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInfo,
 		prAdapter->fgTestMode = TRUE;
 
 	/* 0. always indicate disconnection */
+	aisFsmStateAbort(prAdapter,
+			DISCONNECT_REASON_CODE_RESERVED,
+			FALSE);
+#if 0
 	if (kalGetMediaStateIndicated(prAdapter->prGlueInfo) != PARAM_MEDIA_STATE_DISCONNECTED)
 		kalIndicateStatusAndComplete(prAdapter->prGlueInfo, WLAN_STATUS_MEDIA_DISCONNECT, NULL, 0);
+#endif
 	/* 1. Remove pending TX */
 	nicTxRelease(prAdapter, TRUE);
 
@@ -2356,6 +2362,44 @@ VOID nicCmdEventQueryStaStatistics(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prC
 			u4QueryInfoLen, WLAN_STATUS_SUCCESS);
 }
 
+/*----------------------------------------------------------------------------*/
+/*!
+* @brief This function is called when event for query temperature
+*
+* @param prAdapter          Pointer to the Adapter structure.
+* @param prCmdInfo          Pointer to the command information
+* @param pucEventBuf        Pointer to the event buffer
+*
+* @return none
+*
+*/
+/*----------------------------------------------------------------------------*/
+VOID nicCmdEventQueryTemperature(IN P_ADAPTER_T prAdapter,
+		IN P_CMD_INFO_T prCmdInfo, IN PUINT_8 pucEventBuf)
+{
+	UINT_32 u4QueryInfoLen;
+	struct EVENT_TEMPERATURE_T *prEvent;
+	P_GLUE_INFO_T prGlueInfo;
+	UINT_8 *prTemperature;
+
+	ASSERT(prAdapter);
+	ASSERT(prCmdInfo);
+	ASSERT(pucEventBuf);
+	ASSERT(prCmdInfo->pvInformationBuffer);
+
+	if (prCmdInfo->fgIsOid) {
+		prGlueInfo = prAdapter->prGlueInfo;
+		prEvent = (struct EVENT_TEMPERATURE_T *) pucEventBuf;
+		prTemperature = (UINT_8 *) prCmdInfo->pvInformationBuffer;
+
+		*prTemperature = prEvent->ucTemperature;
+		u4QueryInfoLen = sizeof(UINT_8);
+		kalOidComplete(prGlueInfo, prCmdInfo->fgSetQuery,
+				u4QueryInfoLen, WLAN_STATUS_SUCCESS);
+	}
+
+}
+
 #if CFG_AUTO_CHANNEL_SEL_SUPPORT
 /*----------------------------------------------------------------------------*/
 /*!
@@ -2745,9 +2789,6 @@ VOID nicEventLinkQuality(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 
 		if (ucBssIndex >= BSS_INFO_NUM)
 			ucBssIndex = 1;	/* No hit(bss1 for default ais network) */
-		/* printk("=======> rssi with bss%d ,%d\n",ucBssIndex,
-		 * ((P_EVENT_LINK_QUALITY_V2)(prEvent->aucBuffer))->rLq[ucBssIndex].cRssi);
-		 */
 		nicUpdateLinkQuality(prAdapter, ucBssIndex, (P_EVENT_LINK_QUALITY_V2) (prEvent->aucBuffer));
 	}
 
@@ -2915,6 +2956,15 @@ VOID nicEventNloDone(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 	}
 #endif
 }
+
+#if CFG_SUPPORT_SCHED_SCAN
+VOID nicEventSchedScanDone(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
+{
+	DBGLOG(INIT, INFO, "EVENT_ID_SCHED_SCAN_DONE\n");
+	scnEventSchedScanDone(prAdapter,
+		(struct EVENT_SCHED_SCAN_DONE_T *) (prEvent->aucBuffer));
+}
+#endif
 
 VOID nicEventSleepyNotify(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 {
@@ -3245,16 +3295,44 @@ VOID nicEventAddPkeyDone(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 {
 	P_EVENT_ADD_KEY_DONE_INFO prAddKeyDone;
 	P_STA_RECORD_T prStaRec;
+	UINT_8 ucIdx;
+	UINT_8 ucBSSIndex;
 
 	prAddKeyDone = (P_EVENT_ADD_KEY_DONE_INFO) (prEvent->aucBuffer);
+	ucBSSIndex = prAddKeyDone->ucBSSIndex;
 
 	DBGLOG(RSN, EVENT, "EVENT_ID_ADD_PKEY_DONE BSSIDX=%d " MACSTR "\n",
 		prAddKeyDone->ucBSSIndex, MAC2STR(prAddKeyDone->aucStaAddr));
 
 	prStaRec = cnmGetStaRecByAddress(prAdapter, prAddKeyDone->ucBSSIndex, prAddKeyDone->aucStaAddr);
 
-	if (prStaRec) {
-		DBGLOG(RSN, EVENT, "STA " MACSTR " Add Key Done!!\n", MAC2STR(prStaRec->aucMacAddr));
+	if (prStaRec) { /* EVENT_ID_ADD_PKEY_DONE for pairwise key */
+		DBGLOG(RSN, EVENT, "STA " MACSTR " Add Pairwise Key Done!!\n",
+			MAC2STR(prStaRec->aucMacAddr));
+
+		prStaRec->fgIsTxPairwiseKeyReady = TRUE;
+	} else { /* EVENT_ID_ADD_PKEY_DONE for group key */
+		for (ucIdx = 0; ucIdx < CFG_STA_REC_NUM; ucIdx++) {
+
+			prStaRec = cnmGetStaRecByIndex(prAdapter, ucIdx);
+			if (prStaRec &&
+				prStaRec->fgIsInUse &&
+				prStaRec->ucBssIndex == ucBSSIndex &&
+				prStaRec->fgIsTxKeyReady != TRUE) {
+
+				DBGLOG(RSN, EVENT,
+					"STA " MACSTR " Add Group Key Done!!\n",
+					MAC2STR(prStaRec->aucMacAddr));
+
+				prStaRec->fgIsTxGroupKeyReady = TRUE;
+				prStaRec->ucGroupKeyCount++;
+				break;
+			}
+		}
+	}
+
+	if (secCheckSetKeyDone(prStaRec)) {
+		DBGLOG(RSN, EVENT, "Set key done is checked ok.\n");
 		prStaRec->fgIsTxKeyReady = TRUE;
 		qmUpdateStaRec(prAdapter, prStaRec);
 	}
@@ -3489,8 +3567,10 @@ VOID nicEventWakeUpReason(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 {
 	struct _EVENT_WAKEUP_REASON_INFO *prWakeUpReason;
 	P_GLUE_INFO_T prGlueInfo;
+#if CFG_SUPPORT_MAGIC_PKT_VENDOR_EVENT
+	struct wiphy *wiphy;
+#endif
 
-	DBGLOG(NIC, INFO, "nicEventWakeUpReason\n");
 	prGlueInfo = prAdapter->prGlueInfo;
 
 	/* Driver receives EVENT_ID_WOW_WAKEUP_REASON after firmware wake up host
@@ -3512,6 +3592,17 @@ VOID nicEventWakeUpReason(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 	prWakeUpReason = (struct _EVENT_WAKEUP_REASON_INFO *) (prEvent->aucBuffer);
 	prGlueInfo->prAdapter->rWowCtrl.ucReason = prWakeUpReason->reason;
 	DBGLOG(NIC, INFO, "nicEventWakeUpReason:%d\n", prGlueInfo->prAdapter->rWowCtrl.ucReason);
+
+#if CFG_SUPPORT_MAGIC_PKT_VENDOR_EVENT
+	if (prWakeUpReason->reason != ENUM_PF_CMD_TYPE_UNDEFINED) {
+		wiphy = priv_to_wiphy(prGlueInfo);
+		DBGLOG(RX, INFO,
+			"upload EVENT ID[0x%02X] to upper layer!!\n",
+			prEvent->ucEID);
+		mtk_cfg80211_vendor_event_wowlan_magic_pkt(wiphy,
+				prGlueInfo->prDevHandler->ieee80211_ptr, 0);
+	}
+#endif
 }
 #endif
 
@@ -3858,6 +3949,9 @@ VOID nicCmdEventSetAddKey(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInfo, I
 	prCmdKey = (P_CMD_802_11_KEY) (prWifiCmd->aucBuffer);
 	ucBssIndex = prCmdKey->ucBssIdx;
 
+	if (ucBssIndex > HW_BSSID_NUM)
+		return;
+
 	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
 	ASSERT(prBssInfo);
 
@@ -3976,3 +4070,24 @@ VOID nicCmdEventGetTxPwrTbl(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInfo,
 			       u4QueryInfoLen, WLAN_STATUS_SUCCESS);
 	}
 }
+
+VOID nicEventGetTemperature(IN P_ADAPTER_T prAdapter,
+			    IN P_WIFI_EVENT_T prEvent)
+{
+	P_CMD_INFO_T prCmdInfo;
+
+	/* command response handling */
+	prCmdInfo = nicGetPendingCmdInfo(prAdapter, prEvent->ucSeqNum);
+
+	if (prCmdInfo != NULL) {
+		if (prCmdInfo->pfCmdDoneHandler)
+			prCmdInfo->pfCmdDoneHandler(prAdapter,
+				prCmdInfo, prEvent->aucBuffer);
+		else if (prCmdInfo->fgIsOid)
+			kalOidComplete(prAdapter->prGlueInfo,
+				prCmdInfo->fgSetQuery, 0, WLAN_STATUS_SUCCESS);
+		/* return prCmdInfo */
+		cmdBufFreeCmdInfo(prAdapter, prCmdInfo);
+	}
+}
+

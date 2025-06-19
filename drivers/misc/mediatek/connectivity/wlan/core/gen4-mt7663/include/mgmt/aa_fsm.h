@@ -114,6 +114,10 @@
 
 #define TX_ASSOCIATE_TIMEOUT_TU        512 /* TU. */
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+#define SAP_CHAN_NOISE_GET_INFO_PERIOD        5000 /* ms */
+#endif
+
 /*******************************************************************************
  *                             D A T A   T Y P E S
  *******************************************************************************
@@ -257,5 +261,15 @@ aaaFsmRunEventTxDone(IN struct ADAPTER *prAdapter,
 		     IN struct MSDU_INFO *prMsduInfo,
 		     IN enum ENUM_TX_RESULT_CODE rTxDoneStatus);
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+void aaaChanNoiseInitWorkHandler(struct work_struct *work);
 
+void aaaChanNoiseCollectionWorkHandler(struct work_struct *work);
+
+void aaaStaEventNotify(IN struct STA_RECORD *prStaRec,
+	IN unsigned char *pucAddr, IN unsigned char fgIsConnected);
+
+void aaaUnassocStaMeasureTimeout(IN struct ADAPTER *prAdapter,
+	unsigned long ulParamPtr);
+#endif
 #endif /* _AA_FSM_H */

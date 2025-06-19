@@ -2745,7 +2745,7 @@ _priv_get_int(IN struct net_device *prNetDev,
 			UINT_16 i, j = 0;
 			UINT_8 NumOfChannel = 50;
 			UINT_8 ucMaxChannelNum = 50;
-			INT_32 ch[50];
+			INT_32 ch[50] = {0};
 			/* RF_CHANNEL_INFO_T aucChannelList[50]; */
 			P_RF_CHANNEL_INFO_T paucChannelList;
 			P_RF_CHANNEL_INFO_T ChannelList_t;
@@ -4830,7 +4830,7 @@ exit:
 static int priv_driver_get_wifi_type(IN struct net_device *prNetDev,
 				     IN char *pcCommand, IN int i4TotalLen)
 {
-	struct PARAM_GET_WIFI_TYPE rParamGetWifiType;
+	struct PARAM_GET_WIFI_TYPE rParamGetWifiType = {0};
 	P_GLUE_INFO_T prGlueInfo = NULL;
 	uint32_t rStatus;
 	uint32_t u4BytesWritten = 0;

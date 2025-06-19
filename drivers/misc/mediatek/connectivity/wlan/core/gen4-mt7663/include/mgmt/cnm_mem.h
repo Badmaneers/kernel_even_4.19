@@ -214,7 +214,12 @@ struct SEC_INFO {
 
 /* Fragment information structure */
 struct FRAG_INFO {
-	uint16_t u2NextFragSeqCtrl;
+	uint16_t u2SeqNo;
+	uint8_t ucNextFragNo;
+#if CFG_SUPPORT_FRAG_ATTACK_DETECTION
+	uint8_t ucSecMode;
+	uint64_t u8NextPN;
+#endif /* CFG_SUPPORT_FRAG_ATTACK_DETECTION */
 	uint8_t *pucNextFragStart;
 	struct SW_RFB *pr1stFrag;
 
@@ -504,6 +509,11 @@ struct STA_RECORD {
 
 	u_int8_t afgIsIgnoreAmsduDuplicate[TID_NUM + 1];
 
+#if CFG_SUPPORT_AMSDU_ATTACK_DETECTION
+	uint16_t au2AmsduInvalidSN[TID_NUM + 1];
+	u_int8_t afgIsAmsduInvalid[TID_NUM + 1];
+#endif /* CFG_SUPPORT_AMSDU_ATTACK_DETECTION */
+
 #if 0
 	/* RXM */
 	struct RX_BA_ENTRY *aprRxBaTable[TID_NUM];
@@ -613,7 +623,12 @@ struct STA_RECORD {
 	uint32_t u4EnqueueCounter;
 	uint32_t u4DeqeueuCounter;
 #endif
-
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+	uint64_t u8TotalTxBytes;
+	uint64_t u8TotalRxBytes;
+	uint64_t u8TotalRxPkts;
+	uint64_t u8GetDataRateTime;
+#endif
 #if 1
 	/*----------------------------------------------------------------------
 	 * To be removed, this is to make que_mgt compilation success only
@@ -700,6 +715,12 @@ struct STA_RECORD {
 	/* AP PMF */
 	struct STA_PMF_CFG rPmfCfg;
 #endif
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+	u_int16_t u2BcnReqRepetition;
+#endif
+#if IS_ENABLED(CFG_AP_80211V_SUPPORT)
+	struct TIMER rBTMReqDisassocTimer;
+#endif /* CFG_AP_80211V_SUPPORT */
 #if DSCP_SUPPORT
 	struct _QOS_MAP_SET *qosMapSet;
 #endif

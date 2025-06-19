@@ -911,7 +911,7 @@ u_int8_t rsnPerformPolicySelection(
 	uint32_t u4PairwiseCipher = 0;
 	uint32_t u4GroupCipher = 0;
 	uint32_t u4AkmSuite = 0;
-	struct RSN_INFO *prBssRsnInfo;
+	struct RSN_INFO *prBssRsnInfo = NULL;
 	uint8_t ucBssIndex;
 	u_int8_t fgIsWpsActive = (u_int8_t) FALSE;
 
@@ -1484,6 +1484,119 @@ void rsnGenerateWpaNoneIE(IN struct ADAPTER *prAdapter,
 
 }				/* rsnGenerateWpaNoneIE */
 
+uint32_t _addWPAIE_impl(IN struct ADAPTER *prAdapter,
+	IN OUT struct MSDU_INFO *prMsduInfo)
+{
+	struct P2P_SPECIFIC_BSS_INFO *prP2pSpecBssInfo;
+	struct BSS_INFO *prBssInfo;
+	uint8_t ucBssIndex;
+
+	ucBssIndex = prMsduInfo->ucBssIndex;
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+	if (!prAdapter->rWifiVar.fgReuseRSNIE)
+		return FALSE;
+
+	if (!prBssInfo)
+		return FALSE;
+
+	/* AP + GO */
+	if (!IS_BSS_APGO(prBssInfo))
+		return FALSE;
+
+	/* AP only */
+	if (!p2pFuncIsAPMode(
+		prAdapter->rWifiVar.
+		prP2PConnSettings[prBssInfo->u4PrivateData]))
+		return FALSE;
+
+	/* PMF only */
+	if (prBssInfo->rApPmfCfg.fgMfpc)
+		return FALSE;
+
+	prP2pSpecBssInfo =
+		prAdapter->rWifiVar.
+		prP2pSpecificBssInfo[prBssInfo->u4PrivateData];
+
+	if (prP2pSpecBssInfo &&
+		(prP2pSpecBssInfo->u2WpaIeLen != 0)) {
+		uint8_t *pucBuffer =
+			(uint8_t *) ((unsigned long)
+			prMsduInfo->prPacket + (unsigned long)
+			prMsduInfo->u2FrameLength);
+
+		kalMemCopy(pucBuffer,
+			prP2pSpecBssInfo->aucWpaIeBuffer,
+			prP2pSpecBssInfo->u2WpaIeLen);
+		prMsduInfo->u2FrameLength += prP2pSpecBssInfo->u2WpaIeLen;
+
+		DBGLOG(RSN, INFO,
+			"Keep supplicant WPA IE content w/o update\n");
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+
+uint32_t _addRSNIE_impl(IN struct ADAPTER *prAdapter,
+	IN OUT struct MSDU_INFO *prMsduInfo)
+{
+	struct P2P_SPECIFIC_BSS_INFO *prP2pSpecBssInfo;
+	struct BSS_INFO *prBssInfo;
+	uint8_t ucBssIndex;
+
+	ucBssIndex = prMsduInfo->ucBssIndex;
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+	if (!prAdapter->rWifiVar.fgReuseRSNIE)
+		return FALSE;
+
+	if (!prBssInfo)
+		return FALSE;
+
+	/* AP + GO */
+	if (!IS_BSS_APGO(prBssInfo))
+		return FALSE;
+
+	/* AP only */
+	if (!p2pFuncIsAPMode(
+		prAdapter->rWifiVar.
+		prP2PConnSettings[prBssInfo->u4PrivateData]))
+		return FALSE;
+
+	/* PMF only */
+	DBGLOG(RSN, INFO,
+		"Attention:fgMfpc %d.\n", prBssInfo->rApPmfCfg.fgMfpc);
+	if (prBssInfo->rApPmfCfg.fgMfpc)
+		return FALSE;
+
+	prP2pSpecBssInfo =
+		prAdapter->rWifiVar.
+		prP2pSpecificBssInfo[prBssInfo->u4PrivateData];
+
+	if (prP2pSpecBssInfo &&
+		(prP2pSpecBssInfo->u2RsnIeLen != 0)) {
+		uint8_t *pucBuffer =
+			(uint8_t *) ((unsigned long)
+			prMsduInfo->prPacket + (unsigned long)
+			prMsduInfo->u2FrameLength);
+
+		kalMemCopy(pucBuffer,
+			prP2pSpecBssInfo->aucRsnIeBuffer,
+			prP2pSpecBssInfo->u2RsnIeLen);
+		prMsduInfo->u2FrameLength += prP2pSpecBssInfo->u2RsnIeLen;
+
+		DBGLOG(RSN, INFO,
+			"Keep supplicant RSN IE content w/o update\n");
+
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
 /*----------------------------------------------------------------------------*/
 /*!
  *
@@ -1525,6 +1638,8 @@ void rsnGenerateWPAIE(IN struct ADAPTER *prAdapter,
 
 	/* if (eNetworkId != NETWORK_TYPE_AIS_INDEX) */
 	/* return; */
+	if (_addWPAIE_impl(prAdapter, prMsduInfo))
+		return;
 
 #if CFG_ENABLE_WIFI_DIRECT
 	if ((prAdapter->fgIsP2PRegistered &&
@@ -1674,6 +1789,10 @@ void rsnGenerateRSNIE(IN struct ADAPTER *prAdapter,
 		authAddRSNIE(prAdapter, prMsduInfo);
 		return;
 	}
+
+	if (_addRSNIE_impl(prAdapter, prMsduInfo))
+		return;
+
 	prBssInfo = prAdapter->aprBssInfo[ucBssIndex];
 	ASSERT(prBssInfo);
 
@@ -1974,10 +2093,19 @@ void rsnParserCheckForRSNCCMPPSK(struct ADAPTER *prAdapter,
 			*pu2StatusCode = STATUS_CODE_INVALID_PAIRWISE_CIPHER;
 			return;
 		}
-		if (rRsnIe.u4GroupKeyCipherSuite != RSN_CIPHER_SUITE_CCMP) {
+		/* When softap's conf support both TKIP&CCMP,
+		 * the Group Cipher Suite would be TKIP
+		 * If we check the Group Cipher Suite == CCMP
+		 * about peer's Asso Req
+		 * The connection would be fail
+		 * due to STATUS_CODE_INVALID_GROUP_CIPHER
+		 */
+		if (rRsnIe.u4GroupKeyCipherSuite != RSN_CIPHER_SUITE_CCMP &&
+			!prAdapter->rWifiVar.fgReuseRSNIE) {
 			*pu2StatusCode = STATUS_CODE_INVALID_GROUP_CIPHER;
 			return;
 		}
+
 		if ((rRsnIe.u4AuthKeyMgtSuiteCount != 1)
 		    || (rRsnIe.au4AuthKeyMgtSuite[0] != RSN_AKM_SUITE_PSK)) {
 			*pu2StatusCode = STATUS_CODE_INVALID_AKMP;
@@ -4025,4 +4153,86 @@ uint32_t rsnCalOweIELen(IN struct ADAPTER *prAdapter,
 		return 0;
 }
 #endif
+
+/*----------------------------------------------------------------------------*/
+/*!
+ *
+ * \brief This routine is called to generate RSNXE for
+ *        associate request frame.
+ *
+ * \param[in]  prAdapter	The Selected BSS description
+ * \param[in]  prMsduInfo	MSDU packet buffer
+ *
+ * \retval N/A
+ *
+ * \note
+ *      Called by: AIS module, Associate request
+ */
+/*----------------------------------------------------------------------------*/
+void rsnGenerateRSNXE(IN struct ADAPTER *prAdapter,
+		      IN OUT struct MSDU_INFO *prMsduInfo)
+{
+	uint8_t *pucBuffer;
+	uint8_t ucLength;
+	struct CONNECTION_SETTINGS *prConnSettings;
+
+	prConnSettings =
+		&(prAdapter->rWifiVar.rConnSettings);
+
+	ucLength = prConnSettings->rRsnXE.ucLength + 2;
+
+	DBGLOG(RSN, INFO, "rsnGenerateRSNXE\n");
+
+	if (prConnSettings->rRsnXE.ucLength == 0)
+		return;
+
+	ASSERT(prMsduInfo);
+
+	pucBuffer = (uint8_t *) ((unsigned long)
+				 prMsduInfo->prPacket + (unsigned long)
+				 prMsduInfo->u2FrameLength);
+
+	ASSERT(pucBuffer);
+
+
+	/* if (eNetworkId != NETWORK_TYPE_AIS_INDEX) */
+	/* return; */
+
+	kalMemCopy(pucBuffer, &(prConnSettings->rRsnXE),
+		   ucLength);
+	prMsduInfo->u2FrameLength += IE_SIZE(pucBuffer);
+
+	DBGLOG_MEM8(RSN, INFO, pucBuffer, IE_SIZE(pucBuffer));
+
+	return;
+
+}
+
+/*----------------------------------------------------------------------------*/
+/*!
+ *
+ * \brief This routine is called to calculate RSNXE length for
+ *        associate request frame.
+ *
+ * \param[in]  prAdapter	Major data structure for driver operation
+ * \param[in]  ucBssIndex	unused for this function
+ * \param[in]  prStaRec		unused for this function
+ *
+ * \retval The append WPA IE length
+ *
+ * \note
+ *      Called by: AIS module, Associate request
+ */
+/*----------------------------------------------------------------------------*/
+uint32_t rsnCalRSNXELen(IN struct ADAPTER *prAdapter,
+	IN uint8_t ucBssIndex, struct STA_RECORD *prStaRec)
+{
+	struct CONNECTION_SETTINGS *prConnSettings;
+
+	prConnSettings = &(prAdapter->rWifiVar.rConnSettings);
+	if (prConnSettings->rRsnXE.ucLength != 0)
+		return prConnSettings->rRsnXE.ucLength + 2;
+
+	return 0;
+}
 

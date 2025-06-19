@@ -173,13 +173,19 @@ void p2pSetMode(IN uint8_t ucAPMode)
 #ifdef CFG_DRIVER_INF_NAME_CHANGE
 
 	if (kalStrLen(gprifnamep2p) > 0) {
-		prP2PInfName = kalStrCat(gprifnamep2p, "%d");
+		if (kalStrStr(gprifnamep2p, "%d"))
+			prP2PInfName = gprifnamep2p;
+		else
+			prP2PInfName = kalStrCat(gprifnamep2p, "%d");
 		DBGLOG(INIT, WARN,
 			"P2P ifname customized, use %s\n", prP2PInfName);
 	}
 
 	if (kalStrLen(gprifnameap) > 0) {
-		prAPInfName = kalStrCat(gprifnameap, "%d");
+		if (kalStrStr(gprifnameap, "%d"))
+			prAPInfName = gprifnameap;
+		else
+			prAPInfName = kalStrCat(gprifnameap, "%d");
 		DBGLOG(INIT, WARN,
 			"AP ifname customized, use %s\n", prAPInfName);
 	}

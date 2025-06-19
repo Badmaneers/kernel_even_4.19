@@ -503,7 +503,7 @@ void cnmMemFree(IN struct ADAPTER *prAdapter, IN void *pvMemory)
 #endif
 
 #if CFG_DBG_MGT_BUF
-		prAdapter->u4MemFreeDynamicCount++;
+		GLUE_INC_REF_CNT(prAdapter->u4MemFreeDynamicCount);
 #endif
 		return;
 	}
@@ -608,6 +608,13 @@ struct STA_RECORD *cnmStaRecAlloc(struct ADAPTER *prAdapter,
 				prStaRec->afgIsIgnoreAmsduDuplicate[k] = FALSE;
 			}
 
+#if CFG_SUPPORT_AMSDU_ATTACK_DETECTION
+			for (k = 0; k < TID_NUM + 1; k++) {
+				prStaRec->au2AmsduInvalidSN[k] = 0xFFFF;
+				prStaRec->afgIsAmsduInvalid[k] = FALSE;
+			}
+#endif
+
 			/* Initialize SW TX queues in STA_REC */
 			for (k = 0; k < STA_WAIT_QUEUE_NUM; k++)
 				LINK_INITIALIZE(&prStaRec->arStaWaitQueue[k]);
@@ -617,6 +624,12 @@ struct STA_RECORD *cnmStaRecAlloc(struct ADAPTER *prAdapter,
 			prStaRec->u4TotalTxPktsTime = 0;
 			prStaRec->u4TotalRxPktsNumber = 0;
 			prStaRec->u4MaxTxPktsTime = 0;
+#endif
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+			prStaRec->u8TotalTxBytes = 0;
+			prStaRec->u8TotalRxBytes = 0;
+			prStaRec->u8TotalRxPkts = 0;
+			prStaRec->u8GetDataRateTime = 0;
 #endif
 
 			for (k = 0; k < NUM_OF_PER_STA_TX_QUEUES; k++) {
@@ -727,11 +740,12 @@ static void cnmStaRoutinesForAbort(struct ADAPTER *prAdapter,
 		bssRemoveClient(prAdapter, prBssInfo, prStaRec);
 #endif
 
-	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_STA_REC);
-
 	/* To do: free related resources, e.g. timers, buffers, etc */
 	cnmTimerStopTimer(prAdapter, &prStaRec->rTxReqDoneOrRxRespTimer);
 	cnmTimerStopTimer(prAdapter, &prStaRec->rDeauthTxDoneTimer);
+#if IS_ENABLED(CFG_AP_80211V_SUPPORT)
+	cnmTimerStopTimer(prAdapter, &prStaRec->rBTMReqDisassocTimer);
+#endif /* CFG_AP_80211V_SUPPORT */
 	prStaRec->fgTransmitKeyExist = FALSE;
 
 	prStaRec->fgSetPwrMgtBit = FALSE;
@@ -745,6 +759,7 @@ static void cnmStaRoutinesForAbort(struct ADAPTER *prAdapter,
 
 	qmDeactivateStaRec(prAdapter, prStaRec);
 
+	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_STA_REC);
 	/* Update the driver part table setting */
 	secPrivacyFreeSta(prAdapter, prStaRec);
 

@@ -125,6 +125,7 @@
 #define UDP_PORT_DHCPS				0x43
 #define UDP_PORT_DHCPC				0x44
 #define UDP_PORT_DNS				0x35
+#define UDP_PORT_MDNS				5353
 
 /* IPv4 Header definition */
 #define IPV4_HDR_TOS_OFFSET                     1
@@ -166,6 +167,9 @@
 #define ICMPV6_TYPE_NEIGHBOR_SOLICITATION       0x87
 #define ICMPV6_TYPE_NEIGHBOR_ADVERTISEMENT      0x88
 
+
+#define TCP_HDR_FLAG_OFFSET                     13
+#define TCP_HDR_FLAG_ACK_BIT                    BIT(4)
 #define TCP_HDR_TCP_CSUM_OFFSET                 16
 
 #define UDP_HDR_LEN                             8
@@ -311,8 +315,10 @@
 #define RATE_36M                            72	/* 36M */
 #define RATE_48M                            96	/* 48M */
 #define RATE_54M                            108	/* 54M */
-/* 7.3.2.14 BSS membership selector */
 
+/* 7.3.2.14 BSS membership selector */
+/* BSS Selector - Hash to Element only */
+#define RATE_H2E_ONLY                           123
 /* BSS Selector - Clause 22. HT PHY */
 #define RATE_VHT_PHY                            126
 /* BSS Selector - Clause 20. HT PHY */
@@ -495,6 +501,20 @@
 #define MAC_FRAME_ACTION                        (MAC_FRAME_TYPE_MGT | 0x00D0)
 #define MAC_FRAME_ACTION_NO_ACK                 (MAC_FRAME_TYPE_MGT | 0x00E0)
 
+#define MASK_MAC_FRAME_ASSOC_REQ                BIT(MAC_FRAME_ASSOC_REQ >> 4)
+#define MASK_MAC_FRAME_ASSOC_RSP                BIT(MAC_FRAME_ASSOC_RSP >> 4)
+#define MASK_MAC_FRAME_REASSOC_REQ              BIT(MAC_FRAME_REASSOC_REQ >> 4)
+#define MASK_MAC_FRAME_REASSOC_RSP              BIT(MAC_FRAME_REASSOC_RSP >> 4)
+#define MASK_MAC_FRAME_PROBE_REQ                BIT(MAC_FRAME_PROBE_REQ >> 4)
+#define MASK_MAC_FRAME_PROBE_RSP                BIT(MAC_FRAME_PROBE_RSP >> 4)
+#define MASK_MAC_FRAME_BEACON                   BIT(MAC_FRAME_BEACON >> 4)
+#define MASK_MAC_FRAME_ATIM                     BIT(MAC_FRAME_ATIM >> 4)
+#define MASK_MAC_FRAME_DISASSOC                 BIT(MAC_FRAME_DISASSOC >> 4)
+#define MASK_MAC_FRAME_AUTH                     BIT(MAC_FRAME_AUTH >> 4)
+#define MASK_MAC_FRAME_DEAUTH                   BIT(MAC_FRAME_DEAUTH >> 4)
+#define MASK_MAC_FRAME_ACTION                   BIT(MAC_FRAME_ACTION >> 4)
+#define MASK_MAC_FRAME_ACTION_NO_ACK \
+	BIT(MAC_FRAME_ACTION_NO_ACK >> 4)
 #define MAC_FRAME_CONTRL_WRAPPER                (MAC_FRAME_TYPE_CTRL | 0x0070)
 #define MAC_FRAME_BLOCK_ACK_REQ                 (MAC_FRAME_TYPE_CTRL | 0x0080)
 #define MAC_FRAME_BLOCK_ACK                     (MAC_FRAME_TYPE_CTRL | 0x0090)
@@ -622,6 +642,8 @@
 #define AUTH_TRANSACTION_SEQ_2                      2
 #define AUTH_TRANSACTION_SEQ_3                      3
 #define AUTH_TRANSACTION_SEQ_4                      4
+
+#define AUTH_STATUS_CODE_FIELD_LEN                  2
 
 /* 7.3.1.3 Beacon Interval field */
 #define BEACON_INTERVAL_FIELD_LEN                   2
@@ -845,6 +867,8 @@
 #define STATUS_CODE_DESTINATION_STA_NOT_QSTA        50
 /* Association denied because the ListenInterval is too large */
 #define STATUS_CODE_ASSOC_DENIED_LARGE_LIS_INTERVAL 51
+
+#define WLAN_STATUS_SAE_HASH_TO_ELEMENT             126
 
 /* proprietary definition of reserved field of Status Code */
 /* Join failure */
@@ -1124,10 +1148,10 @@
 #define ELEM_ID_NR_BSS_TERMINATION_DURATION			4
 
 /* 7.3.2.25 RSN information element */
-/* one pairwise, one AKM suite, one PMKID */
-#define ELEM_MAX_LEN_WPA                            34
-/* one pairwise, one AKM suite, one PMKID */
-#define ELEM_MAX_LEN_RSN                            38
+/* two pairwise, one AKM suite, one PMKID */
+#define ELEM_MAX_LEN_WPA                            38
+/* two pairwise, one AKM suite, one PMKID */
+#define ELEM_MAX_LEN_RSN                            42
 /* one pairwise, one AKM suite, one BKID */
 #define ELEM_MAX_LEN_WAPI                           38
 /* one pairwise, one AKM suite, one BKID */
@@ -1183,6 +1207,8 @@
 #define RRM_CAP_INFO_BEACON_PASSIVE_MEASURE_BIT     4
 #define RRM_CAP_INFO_BEACON_ACTIVE_MEASURE_BIT      5
 #define RRM_CAP_INFO_BEACON_TABLE_BIT               6
+#define RRM_CAP_INFO_CHANNEL_LOAD_MEASURE_BIT       9
+#define RRM_CAP_INFO_NOISE_HISTOGRAM_MEASURE_BIT    10
 #define RRM_CAP_INFO_TSM_BIT                        14
 #define RRM_CAP_INFO_RRM_BIT                        17
 
@@ -1574,6 +1600,8 @@
 /* 7.4.7 Public Action frame details */
 /* 20/40 BSS coexistence */
 #define ACTION_PUBLIC_20_40_COEXIST                 0
+/* 20/40 BSS coexistence */
+#define ACTION_PUBLIC_VENDOR_SPECIFIC               9
 
 #if CFG_SUPPORT_802_11W
 /* SA Query Action frame (IEEE 802.11w/D8.0, 7.4.9) */
@@ -1682,6 +1710,16 @@
 #define RM_ACTION_LM_REPORT                         3
 #define RM_ACTION_NEIGHBOR_REQUEST                  4
 #define RM_ACTION_REIGHBOR_RESPONSE                 5
+
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+/* Optional subelement IDs for Beacon request (Table 9-88) */
+#define BCN_REQ_ELEM_SUBID_SSID              0
+#define BCN_REQ_ELEM_SUBID_BEACON_REPORTING  1
+#define BCN_REQ_ELEM_SUBID_REPORTING_DETAIL  2
+#define BCN_REQ_ELEM_SUBID_REQUEST           10
+#define BCN_REQ_ELEM_SUBID_AP_CHANNEL_REPORT 51
+#define BCN_REQ_ELEM_SUBID_WIDE_BW_CH_SWITCH 163
+#endif /* CFG_AP_80211K_SUPPORT */
 
 /*******************************************************************************
  *                             D A T A   T Y P E S
@@ -3202,6 +3240,35 @@ struct WMM_ACTION_TSPEC_FRAME {
 	uint8_t		ucStatusCode;
 	uint8_t		aucInfoElem[1];
 } __KAL_ATTRIB_PACKED__;
+
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+struct SUB_IE_BEACON_REPORTING {
+	uint8_t ucId; /* BCN_REQ_ELEM_SUBID_BEACON_REPORTING */
+	uint8_t ucLength;
+	uint8_t ucReportingCond;
+	uint8_t ucReportingRef;
+} __KAL_ATTRIB_PACKED__;
+
+struct SUB_IE_REQUEST {
+	uint8_t ucId; /* BCN_REQ_ELEM_SUBID_REQUEST */
+	uint8_t ucLength;
+	uint8_t aucElems[1]; /* requested element ids */
+} __KAL_ATTRIB_PACKED__;
+
+struct SUB_IE_AP_CHANNEL_REPORT {
+	uint8_t ucId; /* BCN_REQ_ELEM_SUBID_AP_CHANNEL_REPORT */
+	uint8_t ucLength;
+	uint8_t ucOpClass;
+	uint8_t aucElems[1]; /* channel lists */
+} __KAL_ATTRIB_PACKED__;
+
+struct SUB_IE_WIDE_BW_CH_SWITCH {
+	uint8_t ucId; /* BCN_REQ_ELEM_SUBID_WIDE_BW_CH_SWITCH */
+	uint8_t ucLength;
+	uint8_t ucNewChWidth;
+	uint8_t ucNewChCenterFreq[2];
+} __KAL_ATTRIB_PACKED__;
+#endif /* CFG_AP_80211K_SUPPORT */
 
 #if defined(WINDOWS_DDK) || defined(WINDOWS_CE)
 #pragma pack()

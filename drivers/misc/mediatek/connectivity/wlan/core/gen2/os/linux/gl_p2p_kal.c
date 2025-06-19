@@ -177,7 +177,7 @@ kalP2PSetState(IN P_GLUE_INFO_T prGlueInfo,
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
@@ -185,19 +185,25 @@ kalP2PSetState(IN P_GLUE_INFO_T prGlueInfo,
 
 	if (eState == PARAM_MEDIA_STATE_CONNECTED) {
 		prGlueInfo->prP2PInfo->eState = PARAM_MEDIA_STATE_CONNECTED;
-		u4Offset =
+		i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_STA_CONNECT=%pM ", rPeerAddr);
 		evt.data.length = strlen(aucBuffer);
-		DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+		if (i4Offset < 0) {
+			DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+			return;
+		}
 
 		/* indicate in IWECUSTOM event */
 		wireless_send_event(prGlueInfo->prP2PInfo->prDevHandler, IWEVCUSTOM, &evt, aucBuffer);
 
 	} else if (eState == PARAM_MEDIA_STATE_DISCONNECTED) {
-		u4Offset =
+		i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_STA_DISCONNECT=%pM ", rPeerAddr);
 		evt.data.length = strlen(aucBuffer);
-		DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+		if (i4Offset < 0) {
+			DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+			return;
+		}
 
 		/* indicate in IWECUSTOM event */
 		wireless_send_event(prGlueInfo->prP2PInfo->prDevHandler, IWEVCUSTOM, &evt, aucBuffer);
@@ -269,7 +275,7 @@ kalP2PSetRole(IN P_GLUE_INFO_T prGlueInfo,
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 	ASSERT(ucRole <= 2);
@@ -280,14 +286,17 @@ kalP2PSetRole(IN P_GLUE_INFO_T prGlueInfo,
 		prGlueInfo->prP2PInfo->ucRole = ucRole;
 
 	if (pucSSID)
-		u4Offset =
+		i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_FORMATION_RST=%d%d%d%c%c", ucResult, ucRole,
 			 1 /* persistence or not */, pucSSID[7], pucSSID[8]);
 	else
-		u4Offset =
+		i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_FORMATION_RST=%d%d%d%c%c", ucResult, ucRole,
 			 1 /* persistence or not */, '0', '0');
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 	evt.data.length = strlen(aucBuffer);
 
 	/* if (pucSSID) */
@@ -585,7 +594,7 @@ VOID kalP2PIndicateConnReq(IN P_GLUE_INFO_T prGlueInfo, IN PUINT_8 pucDevName, I
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
@@ -600,10 +609,13 @@ VOID kalP2PIndicateConnReq(IN P_GLUE_INFO_T prGlueInfo, IN PUINT_8 pucDevName, I
 	/* prepare event structure */
 	memset(&evt, 0, sizeof(evt));
 
-	u4Offset =
+	i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_DVC_REQ");
 	evt.data.length = strlen(aucBuffer);
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 
 	/* indicate in IWEVCUSTOM event */
 	wireless_send_event(prGlueInfo->prP2PInfo->prDevHandler, IWEVCUSTOM, &evt, aucBuffer);
@@ -630,7 +642,7 @@ kalP2PInvitationIndication(IN P_GLUE_INFO_T prGlueInfo,
 #if 1
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
@@ -648,10 +660,13 @@ kalP2PInvitationIndication(IN P_GLUE_INFO_T prGlueInfo,
 	/* prepare event structure */
 	memset(&evt, 0, sizeof(evt));
 
-	u4Offset =
+	i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_INV_INDICATE");
 	evt.data.length = strlen(aucBuffer);
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 
 	/* indicate in IWEVCUSTOM event */
 	wireless_send_event(prGlueInfo->prP2PInfo->prDevHandler, IWEVCUSTOM, &evt, aucBuffer);
@@ -733,7 +748,7 @@ VOID kalP2PInvitationStatus(IN P_GLUE_INFO_T prGlueInfo, IN UINT_32 u4InvStatus)
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
@@ -743,9 +758,12 @@ VOID kalP2PInvitationStatus(IN P_GLUE_INFO_T prGlueInfo, IN UINT_32 u4InvStatus)
 	/* prepare event structure */
 	memset(&evt, 0, sizeof(evt));
 
-	u4Offset =
+	i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_INV_STATUS");
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 	evt.data.length = strlen(aucBuffer);
 
 	/* indicate in IWEVCUSTOM event */
@@ -766,15 +784,18 @@ VOID kalP2PIndicateSDRequest(IN P_GLUE_INFO_T prGlueInfo, IN PARAM_MAC_ADDRESS r
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
 	memset(&evt, 0, sizeof(evt));
 
-	u4Offset =
+	i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_SD_REQ %d", ucSeqNum);
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 	evt.data.length = strlen(aucBuffer);
 
 	/* indicate IWEVP2PSDREQ event */
@@ -796,15 +817,18 @@ void kalP2PIndicateSDResponse(IN P_GLUE_INFO_T prGlueInfo, IN PARAM_MAC_ADDRESS 
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
 	memset(&evt, 0, sizeof(evt));
-	u4Offset =
+	i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_SD_RESP %d", ucSeqNum);
 	evt.data.length = strlen(aucBuffer);
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 
 	/* indicate IWEVP2PSDREQ event */
 	wireless_send_event(prGlueInfo->prP2PInfo->prDevHandler, IWEVCUSTOM, &evt, aucBuffer);
@@ -827,16 +851,19 @@ VOID kalP2PIndicateTXDone(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucSeqNum, IN UI
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
 	memset(&evt, 0, sizeof(evt));
 
-	u4Offset =
+	i4Offset =
 	snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_SD_XMITTED: %d %d", ucSeqNum, ucStatus);
 	evt.data.length = strlen(aucBuffer);
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 
 	/* indicate IWEVP2PSDREQ event */
 	wireless_send_event(prGlueInfo->prP2PInfo->prDevHandler, IWEVCUSTOM, &evt, aucBuffer);
@@ -867,14 +894,17 @@ VOID kalP2PIndicateSecCheckRsp(IN P_GLUE_INFO_T prGlueInfo, IN PUINT_8 pucRsp, I
 {
 	union iwreq_data evt;
 	UINT_8 aucBuffer[IW_CUSTOM_MAX];
-	UINT_32 u4Offset = 0;
+	INT_32 i4Offset = 0;
 
 	ASSERT(prGlueInfo);
 
 	memset(&evt, 0, sizeof(evt));
-	u4Offset =
+	i4Offset =
 		snprintf(aucBuffer, IW_CUSTOM_MAX - 1, "P2P_SEC_CHECK_RSP=");
-	DBGLOG(INIT, LOUD, "u4Offset = [%u]\n", u4Offset);
+	if (i4Offset < 0) {
+		DBGLOG(INIT, LOUD, "i4Offset = [%u]\n", i4Offset);
+		return;
+	}
 
 	kalMemCopy(prGlueInfo->prP2PInfo->aucSecCheckRsp, pucRsp, u2RspLen);
 	evt.data.length = strlen(aucBuffer);

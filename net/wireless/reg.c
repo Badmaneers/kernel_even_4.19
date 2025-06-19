@@ -340,13 +340,6 @@ static void update_world_regdomain(const struct ieee80211_regdomain *rd)
 	cfg80211_world_regdom = rd;
 }
 
-bool is_world_regdom(const char *alpha2)
-{
-	if (!alpha2)
-		return false;
-	return alpha2[0] == '0' && alpha2[1] == '0';
-}
-
 static bool is_alpha2_set(const char *alpha2)
 {
 	if (!alpha2)

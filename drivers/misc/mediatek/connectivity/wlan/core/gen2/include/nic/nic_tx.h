@@ -269,6 +269,7 @@ struct _MSDU_INFO_T {
 	UINT_8 ucTC;		/* Traffic Class: 0~4 (HIF TX0), 5 (HIF TX1) */
 	UINT_8 ucPacketType;	/* 0: Data, 1: Command, 2: HIF Loopback 3: Management Frame */
 	UINT_8 ucStaRecIndex;
+	UINT_8 ucBssIndex;   /*BSS_INFO_T index*/
 	UINT_8 ucNetworkType;	/* See ENUM_NETWORK_TYPE_T */
 	UINT_8 ucFormatID;	/* 0: MAUI, Linux, Windows NDIS 5.1 */
 	BOOLEAN fgIs802_1x;	/* TRUE: 802.1x frame */

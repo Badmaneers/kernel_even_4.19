@@ -208,6 +208,11 @@ VOID aisInitializeConnectionSettings(IN P_ADAPTER_T prAdapter, IN P_REG_INFO_T p
 #if CFG_SUPPORT_ROAMING
 	if (prRegInfo)
 		prConnSettings->fgIsEnableRoaming = ((prRegInfo->fgDisRoaming > 0) ? (FALSE) : (TRUE));
+	/*override disable/enable roaming settings by cfg*/
+	if (prAdapter->rWifiVar.fgDisRoaming)
+		prConnSettings->fgIsEnableRoaming = FALSE;
+	else
+		prConnSettings->fgIsEnableRoaming = TRUE;
 #endif /* CFG_SUPPORT_ROAMING */
 
 	prConnSettings->fgIsAdHocQoSEnable = FALSE;
@@ -321,6 +326,9 @@ VOID aisFsmInit(IN P_ADAPTER_T prAdapter)
 	cnmTimerInitTimer(prAdapter,
 			  &prAisSpecificBssInfo->rBtmResponseTimer,
 			  (PFN_MGMT_TIMEOUT_FUNC) aisTxBtmResponseTimeout, (ULONG) NULL);
+	cnmTimerInitTimer(prAdapter,
+			&prAisFsmInfo->rChannelTimeoutTimer,
+			(PFN_MGMT_TIMEOUT_FUNC) aisFsmRunEventChannelTimeout, (ULONG) NULL);
 
 	/* 4 <1.2> Initiate PWR STATE */
 	SET_NET_PWR_STATE_IDLE(prAdapter, prAisBssInfo->ucBssIndex);
@@ -2575,8 +2583,7 @@ VOID aisFsmStateAbort(IN P_ADAPTER_T prAdapter, UINT_8 ucReasonOfDisconnect, BOO
 	case AIS_STATE_ONLINE_SCAN:
 		/* Do abort SCAN */
 #if CFG_SUPPORT_ABORT_SCAN
-		if (ucReasonOfDisconnect != DISCONNECT_REASON_CODE_NEW_CONNECTION &&
-		    prAdapter->prGlueInfo->ucAbortScanCnt < ABORT_SCAN_COUNT &&
+		if (prAdapter->prGlueInfo->ucAbortScanCnt < ABORT_SCAN_COUNT &&
 		    prAdapter->prGlueInfo->u4LastNormalScanTime != 0 &&
 		    !(CHECK_FOR_TIMEOUT(kalGetTimeTick(),
 					prAdapter->prGlueInfo->u4LastNormalScanTime,
@@ -2762,7 +2769,9 @@ enum _ENUM_AIS_STATE_T aisFsmJoinCompleteAction(IN struct _ADAPTER_T *prAdapter,
 				/* 4 <1.2> Deactivate previous AP's STA_RECORD_T in Driver if have. */
 				if ((prAisBssInfo->prStaRecOfAP) &&
 				    (prAisBssInfo->prStaRecOfAP != prStaRec) &&
-				    (prAisBssInfo->prStaRecOfAP->fgIsInUse)) {
+				    (prAisBssInfo->prStaRecOfAP->fgIsInUse) &&
+				    (prAisBssInfo->prStaRecOfAP->ucBssIndex ==
+				     prAisBssInfo->ucBssIndex)) {
 
 					cnmStaRecChangeState(prAdapter, prAisBssInfo->prStaRecOfAP, STA_STATE_1);
 					cnmStaRecFree(prAdapter, prAisBssInfo->prStaRecOfAP);

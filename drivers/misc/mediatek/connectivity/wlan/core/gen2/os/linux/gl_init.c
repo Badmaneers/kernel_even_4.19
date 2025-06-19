@@ -1843,7 +1843,8 @@ VOID wlanUpdateChannelTable(P_GLUE_INFO_T prGlueInfo)
 					mtk_5ghz_channels[j].flags &= ~IEEE80211_CHAN_DISABLED;
 					mtk_5ghz_channels[j].orig_flags &= ~IEEE80211_CHAN_DISABLED;
 					mtk_5ghz_channels[j].dfs_state =
-					    (aucChannelList[i].eDFS) ?
+					    (aucChannelList[i].eDFS
+						!= NL80211_DFS_USABLE) ?
 					     NL80211_DFS_USABLE :
 					     NL80211_DFS_UNAVAILABLE;
 					break;

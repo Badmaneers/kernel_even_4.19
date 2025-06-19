@@ -873,6 +873,7 @@ int mtk_p2p_cfg80211_add_key(struct wiphy *wiphy,
 	if (rStatus == WLAN_STATUS_SUCCESS)
 		i4Rslt = 0;
 
+	/*For 7663 Check addkey done & add Msleep change to mdelay*/
 	while (!prGlueInfo->prAdapter->fgIsAddKeyDone) {
 		if (ucLoopCnt > 100) {
 			DBGLOG(P2P, ERROR,
@@ -881,8 +882,9 @@ int mtk_p2p_cfg80211_add_key(struct wiphy *wiphy,
 		}
 
 		ucLoopCnt++;
-		kalMsleep(1);
+		kalMdelay(1);
 	}
+
 	return i4Rslt;
 }
 
@@ -3368,6 +3370,17 @@ int mtk_p2p_cfg80211_disconnect(struct wiphy *wiphy,
 
 		if (mtk_Netdev_To_RoleIdx(prGlueInfo, dev, &ucRoleIdx) < 0)
 			break;
+
+#if CFG_SUPPORT_CFG80211_AUTH
+		if (prGlueInfo->prAdapter->rWifiVar.
+			prP2PConnSettings[ucRoleIdx]->bss) {
+			cfg80211_assoc_timeout(dev,
+				prGlueInfo->prAdapter->rWifiVar.prP2PConnSettings[ucRoleIdx]->bss);
+			DBGLOG(P2P, EVENT, "assoc timeout notify[%d]\n", ucRoleIdx);
+			prGlueInfo->prAdapter->rWifiVar.
+				prP2PConnSettings[ucRoleIdx]->bss = NULL;
+		}
+#endif
 /* prDisconnMsg = (P_MSG_P2P_CONNECTION_ABORT_T)
  * MemAlloc(sizeof(P_MSG_P2P_CONNECTION_ABORT_T), VIR_MEM_TYPE);
  */
@@ -3451,7 +3464,7 @@ mtk_p2p_cfg80211_change_iface(IN struct wiphy *wiphy,
 			DBGLOG(P2P, TRACE, "NL80211_IFTYPE_P2P_CLIENT.\n");
 			prSwitchModeMsg->eIftype = IFTYPE_P2P_CLIENT;
 			/* This case need to fall through */
-			/* FALLTHRU */
+			kal_fallthrough;
 		case NL80211_IFTYPE_STATION:
 			if (type == NL80211_IFTYPE_STATION) {
 				DBGLOG(P2P, TRACE, "NL80211_IFTYPE_STATION.\n");
@@ -3465,7 +3478,7 @@ mtk_p2p_cfg80211_change_iface(IN struct wiphy *wiphy,
 			kalP2PSetRole(prGlueInfo, 2, ucRoleIdx);
 			prSwitchModeMsg->eIftype = IFTYPE_AP;
 			/* This case need to fall through */
-			/* FALLTHRU */
+			kal_fallthrough;
 		case NL80211_IFTYPE_P2P_GO:
 			if (type == NL80211_IFTYPE_P2P_GO) {
 				DBGLOG(P2P, TRACE,
@@ -4582,11 +4595,11 @@ int mtk_p2p_cfg80211_testmode_get_best_channel(IN struct wiphy *wiphy,
 			aucChannelList[i].ucChannelNum;
 		arChannelDirtyScore_2G[i].u2APNumScore = u2APNumScore;
 
-		kalSprintf(acLogChannel + i*5, "%5d",
+		kalSnprintf(acLogChannel + i*5, 5, "%5d",
 			aucChannelList[i].ucChannelNum);
-		kalSprintf(acLogAPNum + i*5, "%5d",
+		kalSnprintf(acLogAPNum + i*5, 5, "%5d",
 			prGetChnLoad->rEachChnLoad[ucIdx].u2APNum);
-		kalSprintf(acLogScore + i*5, "%5d", u2APNumScore);
+		kalSnprintf(acLogScore + i*5, 5, "%5d", u2APNumScore);
 	}
 
 	DBGLOG(P2P, INFO, "[ACS]Channel :%s\n", acLogChannel);

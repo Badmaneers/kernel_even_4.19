@@ -278,6 +278,7 @@ struct CONNECTION_SETTINGS {
 	/* for OWE info store, when upper layer set rsn info */
 	struct OWE_INFO_T rOweInfo;
 #endif
+	struct RSNXE rRsnXE;
 };
 
 struct BSS_INFO {
@@ -582,6 +583,14 @@ struct BSS_INFO {
 	struct AP_PMF_CFG rApPmfCfg;
 #endif
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+	uint32_t u4ChanUtil;
+	int32_t i4NoiseHistogram;
+	struct T_MULTI_AP_STA_UNASSOC_METRICS
+		arUnAssocSTA[SAP_UNASSOC_METRICS_STA_MAX];
+	struct TIMER rUnassocStaMeasureTimer;
+#endif
+
 	uint8_t ucCountryIELen;
 	uint8_t aucCountryStr[3];
 	uint8_t aucSubbandTriplet[253];
@@ -739,7 +748,7 @@ struct WIFI_VAR {
 
 	struct AIS_FSM_INFO rAisFsmInfo;
 
-	enum ENUM_PWR_STATE aePwrState[MAX_BSSID_NUM];
+	enum ENUM_PWR_STATE aePwrState[MAX_BSSID_NUM + 1];
 
 	struct BSS_INFO arBssInfoPool[MAX_BSSID_NUM];
 
@@ -895,6 +904,7 @@ struct WIFI_VAR {
 	 * enable HT/VHT capabilities in that case
 	 */
 	uint8_t ucApAllowHtVhtTkip;
+	uint8_t fgReuseRSNIE;
 
 	uint8_t ucNSS;
 
@@ -978,6 +988,8 @@ struct WIFI_VAR {
 	uint8_t ucListenDtimInterval; /* the times of the dtim interval */
 	uint8_t ucEapolOffload; /* eapol offload when active mode / wow mode */
 	uint8_t ucEnforcePSMode; /* Enforce power mode */
+	uint8_t ucDisSuspendScrOff; /* Do NOT suspend when screen off */
+	uint8_t ucMobileLikeSuspend; /* allow mobile like suspend */
 
 #if CFG_SUPPORT_REPLAY_DETECTION
 	uint8_t ucRpyDetectOffload; /* replay detection eapol offload */
@@ -1049,6 +1061,16 @@ struct WIFI_VAR {
 	uint32_t u4AisJoinChReqIntervel;
 #endif
 
+#if CFG_SUPPORT_TPENHANCE_MODE
+	uint8_t ucTpEnhanceEnable;
+	uint8_t ucTpEnhancePktNum;
+	uint32_t u4TpEnhanceInterval; /* in us */
+	int8_t cTpEnhanceRSSI;
+	uint32_t u4TpEnhanceThreshold;
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
+
+	uint32_t ucTputThresholdMbps;
+
 #if IS_ENABLED(CFG_RX_NAPI_SUPPORT)
 	uint8_t ucRxNapiEnable;
 	uint8_t ucRxNapiPktChk;
@@ -1062,13 +1084,15 @@ struct WIFI_VAR {
 	uint8_t   aucWACIECache[ELEM_MAX_LEN_WAC_INFO];
 	bool	fgEnableWACIE;
 #endif
+	uint32_t u4ForceEdca;
+	uint8_t ucDisMixRegionSetup;
 };
 
 /* cnm_timer module */
 struct ROOT_TIMER {
 	struct LINK rLinkHead;
 	OS_SYSTIME rNextExpiredSysTime;
-	KAL_WAKE_LOCK_T rWakeLock;
+	KAL_WAKE_LOCK_T *prWakeLock;
 	u_int8_t fgWakeLocked;
 };
 
@@ -1349,6 +1373,11 @@ struct ADAPTER {
 	struct sk_buff_head rTxDirectSkbQueue;
 	struct QUE rTxDirectHifQueue[TX_PORT_NUM];
 
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+	struct sk_buff_head rTsoQueue;
+	uint32_t u4TsoQueueCnt;
+#endif
+
 	struct QUE rStaPsQueue[CFG_STA_REC_NUM];
 	uint32_t u4StaPsBitmap;
 	struct QUE rBssAbsentQueue[MAX_BSSID_NUM + 1];
@@ -1550,7 +1579,11 @@ struct ADAPTER {
 
 #if CFG_WOW_SUPPORT
 	struct WOW_CTRL	rWowCtrl;
+#if CFG_SUPPORT_MDNS_OFFLOAD
+	struct MDNS_INFO_T rMdnsInfo;
 	uint8_t mdns_offload_enable;
+	uint8_t mdns_wake_flag;
+#endif
 #endif
 
 #if CFG_SUPPORT_WOW_EINT
@@ -1644,6 +1677,20 @@ struct ADAPTER {
 #if CFG_SUPPORT_HW_1T2R
 	bool fgIsHW1T2R;
 #endif
+
+#if CFG_SUPPORT_SCHED_SCAN
+	uint8_t ucCusMspEntryNum;
+	uint16_t au2CusMspList[10];
+	/* In TU. 1024us. Customized Max Dwell time */
+	uint16_t u2ChannelCusDwellTime;
+	/* In TU. 1024us. CUstmtomized Min Dwell time */
+	uint16_t u2ChannelCusMinDwellTime;
+	/* In TU. 1024us. CUstmtomized Passive Dwell time */
+	uint16_t u2ChannelCusPassiveDwellTime;
+	/* RSSI threshold for PNO Wake  */
+	int32_t  i4RssiThreshold;
+#endif
+
 };				/* end of _ADAPTER_T */
 
 /*******************************************************************************
@@ -1679,6 +1726,10 @@ struct ADAPTER {
 
 #define IS_BSS_BOW(_prBssInfo) \
 	((_prBssInfo)->eNetworkType == NETWORK_TYPE_BOW)
+
+#define IS_BSS_APGO(_prBssInfo) \
+	(IS_BSS_P2P(_prBssInfo) && \
+	(_prBssInfo)->eCurrentOPMode == OP_MODE_ACCESS_POINT)
 
 #define SET_NET_ACTIVE(_prAdapter, _BssIndex) \
 	{(_prAdapter)->aprBssInfo[(_BssIndex)]->fgIsNetActive = TRUE; }

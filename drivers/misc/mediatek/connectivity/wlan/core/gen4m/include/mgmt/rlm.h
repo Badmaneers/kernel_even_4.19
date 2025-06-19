@@ -194,6 +194,8 @@ extern uint32_t g_au4IQData[256];
 		 << VHT_CAP_INFO_MAX_AMPDU_LENGTH_OFFSET))
 
 #define VHT_CAP_INFO_DEFAULT_HIGHEST_DATA_RATE			0
+#define VHT_CAP_INFO_EXT_NSS_BW_CAP				BIT(13)
+
 #endif
 /*******************************************************************************
  *                             D A T A   T Y P E S
@@ -246,10 +248,32 @@ enum ENUM_OP_CHANGE_STATUS_T {
 	OP_CHANGE_STATUS_NUM
 };
 
+enum ENUM_OP_CHANGE_SEND_ACT_T {
+	/* Do not send action frame */
+	OP_CHANGE_SEND_ACT_DISABLE = 0,
+	/* Send action frame if change */
+	OP_CHANGE_SEND_ACT_DEFAULT = 1,
+	/* Send action frame w/wo change */
+	OP_CHANGE_SEND_ACT_FORCE = 2,
+	OP_CHANGE_SEND_ACT_NUM
+};
+
 struct SUB_ELEMENT_LIST {
 	struct SUB_ELEMENT_LIST *prNext;
 	struct SUB_ELEMENT rSubIE;
 };
+
+#if CFG_SUPPORT_DFS
+struct SWITCH_CH_AND_BAND_PARAMS {
+	uint8_t ucCsaNewCh;
+	uint8_t ucCsaCount;
+	uint8_t ucVhtS1;
+	uint8_t ucVhtS2;
+	uint8_t ucVhtBw;
+	enum ENUM_CHNL_EXT eSco;
+	uint8_t ucBssIndex;
+};
+#endif
 
 /*******************************************************************************
  *                            P U B L I C   D A T A
@@ -290,11 +314,30 @@ struct SUB_ELEMENT_LIST {
 #define RLM_NET_IS_11AX(_prBssInfo) \
 	((_prBssInfo)->ucPhyTypeSet & PHY_TYPE_SET_802_11AX)
 #endif
+#if (CFG_SUPPORT_802_11BE == 1)
+#define RLM_NET_IS_11BE(_prBssInfo) \
+	((_prBssInfo)->ucPhyTypeSet & PHY_TYPE_SET_802_11BE)
+#endif
+
+#if CFG_SUPPORT_DFS
+#define MAX_CSA_COUNT 255
+#define HAS_CH_SWITCH_PARAMS(prCSAParams) (prCSAParams->ucCsaNewCh > 0)
+#define HAS_SCO_PARAMS(prCSAParams) (prCSAParams->eSco > 0)
+#define HAS_WIDE_BAND_PARAMS(prCSAParams) \
+	(prCSAParams->ucVhtBw > 0 || \
+	 prCSAParams->ucVhtS1 > 0 || \
+	 prCSAParams->ucVhtS2 > 0)
+#define SHOULD_CH_SWITCH(current, prCSAParams) \
+	(HAS_CH_SWITCH_PARAMS(prCSAParams) && \
+	 (current < prCSAParams->ucCsaCount))
+#endif
 
 /*******************************************************************************
  *                   F U N C T I O N   D E C L A R A T I O N S
  *******************************************************************************
  */
+uint8_t rlmMaxBwToVhtBw(uint8_t ucMaxBw);
+
 void rlmFsmEventInit(struct ADAPTER *prAdapter);
 
 void rlmFsmEventUninit(struct ADAPTER *prAdapter);
@@ -343,6 +386,13 @@ void rlmProcessAssocRsp(struct ADAPTER *prAdapter,
 void rlmProcessHtAction(struct ADAPTER *prAdapter,
 			struct SW_RFB *prSwRfb);
 
+#if CFG_SUPPORT_NAN
+uint32_t rlmFillNANVHTCapIE(struct ADAPTER *prAdapter,
+			   struct BSS_INFO *prBssInfo, uint8_t *pOutBuf);
+uint32_t rlmFillNANHTCapIE(struct ADAPTER *prAdapter,
+		struct BSS_INFO *prBssInfo, uint8_t *pOutBuf);
+#endif
+
 #if CFG_SUPPORT_802_11AC
 void rlmProcessVhtAction(struct ADAPTER *prAdapter,
 			 struct SW_RFB *prSwRfb);
@@ -353,6 +403,8 @@ void rlmFillSyncCmdParam(struct CMD_SET_BSS_RLM_PARAM
 
 void rlmSyncOperationParams(struct ADAPTER *prAdapter,
 			    struct BSS_INFO *prBssInfo);
+
+void rlmSyncAntCtrl(struct ADAPTER *prAdapter, uint8_t txNss, uint8_t rxNss);
 
 void rlmBssInitForAPandIbss(struct ADAPTER *prAdapter,
 			    struct BSS_INFO *prBssInfo);
@@ -393,6 +445,10 @@ void rlmRspGenerateVhtOpIE(struct ADAPTER *prAdapter,
 void rlmFillVhtOpIE(struct ADAPTER *prAdapter,
 		    struct BSS_INFO *prBssInfo, struct MSDU_INFO *prMsduInfo);
 
+void rlmGenerateVhtTPEIE(
+	struct ADAPTER *prAdapter,
+	struct MSDU_INFO *prMsduInfo);
+
 void rlmRspGenerateVhtOpNotificationIE(struct ADAPTER
 			       *prAdapter, struct MSDU_INFO *prMsduInfo);
 void rlmReqGenerateVhtOpNotificationIE(struct ADAPTER
@@ -409,7 +465,18 @@ void rlmGenerateCountryIE(struct ADAPTER *prAdapter,
 #if CFG_SUPPORT_DFS
 void rlmProcessSpecMgtAction(struct ADAPTER *prAdapter,
 			     struct SW_RFB *prSwRfb);
+
+void rlmResetCSAParams(struct BSS_INFO *prBssInfo);
+
+void rlmCsaTimeout(IN struct ADAPTER *prAdapter,
+				unsigned long ulParamPtr);
 #endif
+
+uint32_t rlmUpdateStbcSetting(struct ADAPTER *prAdapter,
+	uint8_t ucBssIndex, uint8_t enable, uint8_t notify);
+
+uint32_t rlmUpdateMrcSetting(struct ADAPTER *prAdapter,
+	uint8_t ucBssIndex, uint8_t enable);
 
 uint32_t
 rlmSendOpModeNotificationFrame(struct ADAPTER *prAdapter,
@@ -442,6 +509,10 @@ uint8_t
 rlmGetBssOpBwByVhtAndHtOpInfo(struct BSS_INFO *prBssInfo);
 
 uint8_t
+rlmGetBssOpBwByOwnAndPeerCapability(struct ADAPTER *prAdapter,
+	struct BSS_INFO *prBssInfo);
+
+uint8_t
 rlmGetVhtOpBwByBssOpBw(uint8_t ucBssOpBw);
 
 void
@@ -455,9 +526,7 @@ rlmChangeOperationMode(
 	uint8_t ucChannelWidth,
 	uint8_t ucOpRxNss,
 	uint8_t ucOpTxNss,
-	#if CFG_SUPPORT_SMART_GEAR
-	uint8_t eNewReq,
-	#endif
+	enum ENUM_OP_CHANGE_SEND_ACT_T ucSendAct,
 	PFN_OPMODE_NOTIFY_DONE_FUNC pfOpChangeHandler
 );
 
@@ -482,7 +551,23 @@ uint32_t rlmTriggerCalBackup(
 
 void rlmModifyVhtBwPara(uint8_t *pucVhtChannelFrequencyS1,
 			uint8_t *pucVhtChannelFrequencyS2,
+			uint8_t ucHtChannelFrequencyS3,
 			uint8_t *pucVhtChannelWidth);
+
+#if (CFG_SUPPORT_WIFI_6G == 1)
+void rlmTransferHe6gOpInfor(IN uint8_t ucChannelNum,
+	IN uint8_t ucChannelWidth,
+	OUT uint8_t *pucChannelWidth,
+	OUT uint8_t *pucCenterFreqS1,
+	OUT uint8_t *pucCenterFreqS2,
+	OUT enum ENUM_CHNL_EXT *peSco);
+
+void rlmModifyHE6GBwPara(uint8_t ucHe6gChannelWidth,
+	uint8_t ucHe6gPrimaryChannel,
+	uint8_t *pucHe6gChannelFrequencyS1,
+	uint8_t *pucHe6gChannelFrequencyS2);
+#endif
+
 
 void rlmReviseMaxBw(
 	struct ADAPTER *prAdapter,
@@ -491,6 +576,17 @@ void rlmReviseMaxBw(
 	enum ENUM_CHANNEL_WIDTH *peChannelWidth,
 	uint8_t *pucS1,
 	uint8_t *pucPrimaryCh);
+
+enum ENUM_CHNL_EXT rlmReviseSco(
+	IN enum ENUM_CHANNEL_WIDTH eChannelWidth,
+	IN uint8_t ucPrimaryCh,
+	IN uint8_t ucS1,
+	IN enum ENUM_CHNL_EXT eScoOrigin,
+	IN uint8_t ucMaxBandwidth);
+
+void rlmRevisePreferBandwidthNss(struct ADAPTER *prAdapter,
+					uint8_t ucBssIndex,
+					struct STA_RECORD *prStaRec);
 
 void rlmSetMaxTxPwrLimit(IN struct ADAPTER *prAdapter, int8_t cLimit,
 			 uint8_t ucEnable);

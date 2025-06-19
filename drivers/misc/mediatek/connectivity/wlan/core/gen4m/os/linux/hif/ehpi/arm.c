@@ -155,8 +155,8 @@ uint32_t glRegisterBus(probe_card pfProbe, remove_card pfRemove)
 	ASSERT(pfProbe);
 	ASSERT(pfRemove);
 
-	pr_debug("mtk_sdio: MediaTek eHPI WLAN driver\n");
-	pr_debug("mtk_sdio: Copyright MediaTek Inc.\n");
+	pr_info("mtk_sdio: MediaTek eHPI WLAN driver\n");
+	pr_info("mtk_sdio: Copyright MediaTek Inc.\n");
 
 	if (pfProbe(NULL) != WLAN_STATUS_SUCCESS) {
 		pfRemove();
@@ -306,7 +306,7 @@ int32_t glBusSetIrq(void *pvData, void *pfnIsr, void *pvCookie)
 	if (i4Status < 0)
 		pr_debug("request_irq(%d) failed\n", pDev->irq);
 	else
-		pr_debug("request_irq(%d) success with dev_id(%x)\n", pDev->irq, (unsigned int)pvCookie);
+		pr_info("request_irq(%d) success with dev_id(%x)\n", pDev->irq, (unsigned int)pvCookie);
 
 	return i4Status;
 }
@@ -326,7 +326,7 @@ void glBusFreeIrq(void *pvData, void *pvCookie)
 	struct net_device *prDev = (struct net_device *)pvData;
 
 	if (!prDev) {
-		pr_debug("Invalid net_device context.\n");
+		pr_info("Invalid net_device context.\n");
 		return;
 	}
 
@@ -441,7 +441,7 @@ static void collibri_ehpi_reg_init(void)
 	u4RegValue |= EHPI_CONFIG;
 	MSC2 = u4RegValue;
 
-	pr_debug("EHPI new MSC2:0x%08x\n", MSC2);
+	pr_info("EHPI new MSC2:0x%08x\n", MSC2);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -480,10 +480,10 @@ static void mt5931_ehpi_reg_init(void)
 	}
 
 	/* 2. memory regioin remapping */
-	mt5931_mcr_base = ioremap_nocache(MEM_MAPPED_ADDR, MEM_MAPPED_LEN);
+	mt5931_mcr_base = ioremap(MEM_MAPPED_ADDR, MEM_MAPPED_LEN);
 	if (!(mt5931_mcr_base)) {
 		release_mem_region(MEM_MAPPED_ADDR, MEM_MAPPED_LEN);
-		pr_err("ioremap_nocache(0x%08X) failed.\n", MEM_MAPPED_ADDR);
+		pr_err("ioremap(0x%08X) failed.\n", MEM_MAPPED_ADDR);
 		return;
 	}
 }
@@ -523,7 +523,7 @@ static irqreturn_t glEhpiInterruptHandler(int irq, void *dev_id)
 	wlanISR(prGlueInfo->prAdapter, TRUE);
 
 	/* 1.1 Halt flag Checking */
-	if (prGlueInfo->ulFlag & GLUE_FLAG_HALT)
+	if (test_bit(GLUE_FLAG_HALT_BIT, &prGlueInfo->ulFlag))
 		return IRQ_HANDLED;
 
 	/* 2. Flag marking for interrupt */

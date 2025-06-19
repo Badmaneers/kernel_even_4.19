@@ -159,7 +159,6 @@ UINT_32 TdlsexLinkMgt(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBuf
 	switch (prCmd->ucActionCode) {
 
 	case TDLS_FRM_ACTION_DISCOVERY_REQ:
-		/* printk("\n\n\n  TDLS_FRM_ACTION_DISCOVERY_REQ\n\n\n"); */
 		if (TdlsDataFrameSend_DISCOVERY_REQ(prAdapter,
 						    prStaRec,
 						    prCmd->aucPeer,
@@ -174,7 +173,6 @@ UINT_32 TdlsexLinkMgt(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBuf
 		break;
 
 	case TDLS_FRM_ACTION_SETUP_REQ:
-		/* printk("\n\n\n  TDLS_FRM_ACTION_SETUP_REQ\n\n\n"); */
 		prStaRec = cnmGetTdlsPeerByAddress(prAdapter, prAdapter->prAisBssInfo->ucBssIndex, prCmd->aucPeer);
 		g_arTdlsLink[prStaRec->ucTdlsIndex] = 0;
 		if (TdlsDataFrameSend_SETUP_REQ(prAdapter,
@@ -199,7 +197,6 @@ UINT_32 TdlsexLinkMgt(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBuf
 		if (prBssInfo->fgTdlsIsProhibited)
 			return 0;
 
-		/* printk("\n\n\n  TDLS_FRM_ACTION_SETUP_RSP\n\n\n"); */
 		if (TdlsDataFrameSend_SETUP_RSP(prAdapter,
 						prStaRec,
 						prCmd->aucPeer,
@@ -214,7 +211,6 @@ UINT_32 TdlsexLinkMgt(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBuf
 		break;
 
 	case TDLS_FRM_ACTION_DISCOVERY_RSP:
-		/* printk("\n\n\n  TDLS_FRM_ACTION_DISCOVERY_RSP\n\n\n"); */
 		if (TdlsDataFrameSend_DISCOVERY_RSP(prAdapter,
 						    prStaRec,
 						    prCmd->aucPeer,
@@ -229,7 +225,6 @@ UINT_32 TdlsexLinkMgt(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBuf
 		break;
 
 	case TDLS_FRM_ACTION_CONFIRM:
-		/* printk("\n\n\n  TDLS_FRM_ACTION_CONFIRM\n\n\n"); */
 		if (TdlsDataFrameSend_CONFIRM(prAdapter,
 					      prStaRec,
 					      prCmd->aucPeer,
@@ -246,10 +241,8 @@ UINT_32 TdlsexLinkMgt(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBuf
 
 		prStaRec = cnmGetTdlsPeerByAddress(prAdapter, prAdapter->prAisBssInfo->ucBssIndex, prCmd->aucPeer);
 		if (prCmd->u2StatusCode == TDLS_REASON_CODE_UNREACHABLE) {
-			/* printk("\n\n\n  u2StatusCode == TDLS_REASON_CODE_UNREACHABLE\n\n\n"); */
 			g_arTdlsLink[prStaRec->ucTdlsIndex] = 0;
 		}
-		/* printk("\n\n\n  TDLS_FRM_ACTION_TEARDOWN\n\n\n"); */
 		if (TdlsDataFrameSend_TearDown(prAdapter,
 					       prStaRec,
 					       prCmd->aucPeer,
@@ -258,13 +251,11 @@ UINT_32 TdlsexLinkMgt(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBuf
 					       prCmd->u2StatusCode,
 					       (UINT_8 *) (prCmd->aucSecBuf),
 					       prCmd->u4SecBufLen) != TDLS_STATUS_SUCCESS) {
-			/* printk("\n teardown frrame  send failure\n"); */
 			return -1;
 		}
 		break;
 
 	default:
-		/* printk("\n\n\n  default\n\n\n"); */
 		return -EINVAL;
 	}
 
@@ -313,13 +304,11 @@ UINT_32 TdlsexLinkOper(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBu
 			}
 		}
 
-		/* printk("TDLS_ENABLE_LINK %d\n", i); */
 		break;
 	case TDLS_DISABLE_LINK:
 
 		prStaRec = cnmGetTdlsPeerByAddress(prAdapter, prAdapter->prAisBssInfo->ucBssIndex, prCmd->aucPeerMac);
 
-		/* printk("TDLS_ENABLE_LINK %d\n", prStaRec->ucTdlsIndex); */
 		g_arTdlsLink[prStaRec->ucTdlsIndex] = 0;
 		if (IS_DLS_STA(prStaRec))
 			cnmStaRecFree(prAdapter, prStaRec);
@@ -476,7 +465,8 @@ TdlsDataFrameSend_TearDown(ADAPTER_T *prAdapter,
 	/* 1. 802.3 header */
 	kalMemCopy(pPkt, pPeerMac, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
-	kalMemCopy(pPkt, prAdapter->rMyMacAddr, TDLS_FME_MAC_ADDR_LEN);
+	kalMemCopy(pPkt, prBssInfo->aucOwnMacAddr,
+		   TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
 	*(UINT_16 *) pPkt = htons(TDLS_FRM_PROT_TYPE);
 	pPkt += 2;
@@ -501,7 +491,6 @@ TdlsDataFrameSend_TearDown(ADAPTER_T *prAdapter,
 
 	ReasonCode = u2StatusCode;
 
-	/* printk("\n\n ReasonCode = %u\n\n",ReasonCode ); */
 
 	kalMemCopy(pPkt, &ReasonCode, 2);
 	pPkt = pPkt + 2;
@@ -526,9 +515,12 @@ TdlsDataFrameSend_TearDown(ADAPTER_T *prAdapter,
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucId = ELEM_ID_LINK_IDENTIFIER;
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucLength = 18;
 
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID, prBssInfo->aucBSSID, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator, prAdapter->rMyMacAddr, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder, pPeerMac, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID,
+		   prBssInfo->aucBSSID, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
+		   prBssInfo->aucOwnMacAddr, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
+		   pPeerMac, 6);
 
 	u4IeLen = IE_SIZE(pPkt);
 	pPkt += u4IeLen;
@@ -541,7 +533,6 @@ TdlsDataFrameSend_TearDown(ADAPTER_T *prAdapter,
 	/* g_arTdlsLink[prStaRec->ucTdlsIndex] = FALSE; */
 	/* } */
 
-	/* printk(" TdlsDataFrameSend_TearDown !!\n"); */
 
 	/* 5. send the data frame */
 	wlanHardStartXmit(prMsduInfo, prMsduInfo->dev);
@@ -599,7 +590,7 @@ TdlsDataFrameSend_SETUP_REQ(ADAPTER_T *prAdapter,
 	/* 1. 802.3 header */
 	kalMemCopy(pPkt, pPeerMac, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
-	kalMemCopy(pPkt, prAdapter->rMyMacAddr, TDLS_FME_MAC_ADDR_LEN);
+	kalMemCopy(pPkt, prBssInfo->aucOwnMacAddr, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
 	*(UINT_16 *) pPkt = htons(TDLS_FRM_PROT_TYPE);
 	pPkt += 2;
@@ -727,7 +718,8 @@ TdlsDataFrameSend_SETUP_REQ(ADAPTER_T *prAdapter,
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucLength = 18;
 
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID, prBssInfo->aucBSSID, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator, prAdapter->rMyMacAddr, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
+		prBssInfo->aucOwnMacAddr, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder, pPeerMac, 6);
 
 	u4IeLen = IE_SIZE(pPkt);
@@ -751,11 +743,16 @@ TdlsDataFrameSend_SETUP_REQ(ADAPTER_T *prAdapter,
 		LR_TDLS_FME_FIELD_FILL(u4IeLen);
 	}
 #if CFG_SUPPORT_802_11AC
-	if (prAdapter->rWifiVar.ucAvailablePhyTypeSet & PHY_TYPE_SET_802_11AC) {
-		/* Add VHT IE *//* try to reuse p2p path */
-		u4IeLen = rlmFillVhtCapIEByAdapter(prAdapter, prBssInfo, pPkt);
-		pPkt += u4IeLen;
-		u4PktLen += u4IeLen;
+	if (prAdapter->fgIsHwACDisabled == 0) {
+
+		if (prAdapter->rWifiVar.ucAvailablePhyTypeSet &
+					PHY_TYPE_SET_802_11AC) {
+			/* Add VHT IE *//* try to reuse p2p path */
+			u4IeLen = rlmFillVhtCapIEByAdapter(prAdapter,
+						prBssInfo, pPkt);
+			pPkt += u4IeLen;
+			u4PktLen += u4IeLen;
+		}
 	}
 #endif
 
@@ -808,7 +805,7 @@ TdlsDataFrameSend_SETUP_RSP(ADAPTER_T *prAdapter,
 	/* 1. 802.3 header */
 	kalMemCopy(pPkt, pPeerMac, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
-	kalMemCopy(pPkt, prAdapter->rMyMacAddr, TDLS_FME_MAC_ADDR_LEN);
+	kalMemCopy(pPkt, prBssInfo->aucOwnMacAddr, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
 	*(UINT_16 *) pPkt = htons(TDLS_FRM_PROT_TYPE);
 	pPkt += 2;
@@ -923,7 +920,8 @@ TdlsDataFrameSend_SETUP_RSP(ADAPTER_T *prAdapter,
 
 	if (pAppendIe != NULL) {
 		if ((ucActionCode != TDLS_FRM_ACTION_TEARDOWN) ||
-		    ((ucActionCode == TDLS_FRM_ACTION_TEARDOWN))) {
+		    ((ucActionCode == TDLS_FRM_ACTION_TEARDOWN) &&
+		     (prStaRec != NULL))) {
 			kalMemCopy(pPkt, pAppendIe, AppendIeLen);
 			LR_TDLS_FME_FIELD_FILL(AppendIeLen);
 		}
@@ -941,8 +939,9 @@ TdlsDataFrameSend_SETUP_RSP(ADAPTER_T *prAdapter,
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucLength = 18;
 
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID, prBssInfo->aucBSSID, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator, pPeerMac, 6);	/* prAdapter->rMyMacAddr */
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder, prAdapter->rMyMacAddr, 6);	/* pPeerMac */
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator, pPeerMac, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
+		prBssInfo->aucOwnMacAddr, 6);
 
 	u4IeLen = IE_SIZE(pPkt);
 	pPkt += u4IeLen;
@@ -964,11 +963,16 @@ TdlsDataFrameSend_SETUP_RSP(ADAPTER_T *prAdapter,
 		LR_TDLS_FME_FIELD_FILL(u4IeLen);
 	}
 #if CFG_SUPPORT_802_11AC
-	if (prAdapter->rWifiVar.ucAvailablePhyTypeSet & PHY_TYPE_SET_802_11AC) {
-		/* Add VHT IE *//* try to reuse p2p path */
-		u4IeLen = rlmFillVhtCapIEByAdapter(prAdapter, prBssInfo, pPkt);
-		pPkt += u4IeLen;
-		u4PktLen += u4IeLen;
+	if (prAdapter->fgIsHwACDisabled == 0) {
+
+		if (prAdapter->rWifiVar.ucAvailablePhyTypeSet &
+					PHY_TYPE_SET_802_11AC) {
+			/* Add VHT IE *//* try to reuse p2p path */
+			u4IeLen = rlmFillVhtCapIEByAdapter(prAdapter,
+						prBssInfo, pPkt);
+			pPkt += u4IeLen;
+			u4PktLen += u4IeLen;
+		}
 	}
 #endif
 
@@ -1018,7 +1022,7 @@ TdlsDataFrameSend_CONFIRM(ADAPTER_T *prAdapter,
 	/* 1. 802.3 header */
 	kalMemCopy(pPkt, pPeerMac, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
-	kalMemCopy(pPkt, prAdapter->rMyMacAddr, TDLS_FME_MAC_ADDR_LEN);
+	kalMemCopy(pPkt, prBssInfo->aucOwnMacAddr, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
 	*(UINT_16 *) pPkt = htons(TDLS_FRM_PROT_TYPE);
 	pPkt += 2;
@@ -1103,10 +1107,12 @@ TdlsDataFrameSend_CONFIRM(ADAPTER_T *prAdapter,
 	/* 3. Frame Formation - (16) Link identifier element */
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucId = ELEM_ID_LINK_IDENTIFIER;
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucLength = 18;
-
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID, prBssInfo->aucBSSID, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator, prAdapter->rMyMacAddr, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder, pPeerMac, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID,
+		prBssInfo->aucBSSID, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
+		prBssInfo->aucOwnMacAddr, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
+		pPeerMac, 6);
 
 	u4IeLen = IE_SIZE(pPkt);
 	pPkt += u4IeLen;
@@ -1398,7 +1404,6 @@ TdlsDataFrameSend_DISCOVERY_REQ(ADAPTER_T *prAdapter,
 	if (ucActionCode != TDLS_FRM_ACTION_DISCOVERY_RSP) {
 		/* 9. Update packet length */
 		prMsduInfo->len = u4PktLen;
-
 		wlanHardStartXmit(prMsduInfo, prMsduInfo->dev);
 	} else {
 		prMsduInfoMgmt->ucPacketType = TX_PACKET_TYPE_MGMT;
@@ -1620,8 +1625,9 @@ TdlsDataFrameSend_DISCOVERY_RSP(ADAPTER_T *prAdapter,
 	TDLS_LINK_IDENTIFIER_IE(pPkt)->ucLength = 18;
 
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID, prBssInfo->aucBSSID, 6);
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator, pPeerMac, 6);	/* prAdapter->rMyMacAddr */
-	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder, prAdapter->rMyMacAddr, 6);	/* pPeerMac */
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator, pPeerMac, 6);
+	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
+		prBssInfo->aucOwnMacAddr, 6);
 
 	u4IeLen = IE_SIZE(pPkt);
 	pPkt += u4IeLen;
@@ -1643,11 +1649,16 @@ TdlsDataFrameSend_DISCOVERY_RSP(ADAPTER_T *prAdapter,
 		LR_TDLS_FME_FIELD_FILL(u4IeLen);
 	}
 #if CFG_SUPPORT_802_11AC
-	if (prAdapter->rWifiVar.ucAvailablePhyTypeSet & PHY_TYPE_SET_802_11AC) {
-		/* Add VHT IE *//* try to reuse p2p path */
-		u4IeLen = rlmFillVhtCapIEByAdapter(prAdapter, prBssInfo, pPkt);
-		pPkt += u4IeLen;
-		u4PktLen += u4IeLen;
+	if (prAdapter->fgIsHwACDisabled == 0) {
+
+		if (prAdapter->rWifiVar.ucAvailablePhyTypeSet &
+						PHY_TYPE_SET_802_11AC) {
+			/* Add VHT IE *//* try to reuse p2p path */
+			u4IeLen = rlmFillVhtCapIEByAdapter(prAdapter,
+						prBssInfo, pPkt);
+			pPkt += u4IeLen;
+			u4PktLen += u4IeLen;
+		}
 	}
 #endif
 
@@ -1818,7 +1829,7 @@ VOID tdls_oper_request(struct net_device *dev, const u8 *peer, u16 oper, u16 rea
 
 	/* make up frame content */
 	/* 1. 802.3 header */
-	kalMemCopy(pPkt, prAdapter->rMyMacAddr, TDLS_FME_MAC_ADDR_LEN);
+	kalMemCopy(pPkt, prBssInfo->aucOwnMacAddr, TDLS_FME_MAC_ADDR_LEN);
 	LR_TDLS_FME_FIELD_FILL(TDLS_FME_MAC_ADDR_LEN);
 	kalMemCopy(pPkt, peer, TDLS_FME_MAC_ADDR_LEN);
 	LR_TDLS_FME_FIELD_FILL(TDLS_FME_MAC_ADDR_LEN);

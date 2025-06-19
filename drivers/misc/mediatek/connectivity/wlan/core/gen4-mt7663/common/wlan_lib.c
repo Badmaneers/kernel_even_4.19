@@ -359,6 +359,7 @@ uint32_t wlanAdapterStart(IN struct ADAPTER *prAdapter,
 		DRIVER_OWN_FAIL,
 		INIT_ADAPTER_FAIL,
 		INIT_HIFINFO_FAIL,
+		SET_CHIP_ECO_INFO_FAIL,
 		RAM_CODE_DOWNLOAD_FAIL,
 		WAIT_FIRMWARE_READY_FAIL,
 		FAIL_REASON_MAX
@@ -517,9 +518,12 @@ uint32_t wlanAdapterStart(IN struct ADAPTER *prAdapter,
 		/* 4 <7> Get ECO Version */
 		u4Status = wlanSetChipEcoInfo(prAdapter);
 
-		if (u4Status != WLAN_STATUS_SUCCESS)
+		if (u4Status != WLAN_STATUS_SUCCESS) {
+			DBGLOG(INIT, ERROR, "wlanSetChipEcoInfo failed!\n");
+			u4Status = WLAN_STATUS_FAILURE;
+			eFailReason = SET_CHIP_ECO_INFO_FAIL;
 			break;
-
+		}
 
 #if CFG_ENABLE_FW_DOWNLOAD
 		/* 4 <8> FW/patch download */
@@ -846,14 +850,15 @@ uint32_t wlanAdapterStart(IN struct ADAPTER *prAdapter,
 		switch (eFailReason) {
 		case WAIT_FIRMWARE_READY_FAIL:
 		case RAM_CODE_DOWNLOAD_FAIL:
+		case SET_CHIP_ECO_INFO_FAIL:
 		case INIT_HIFINFO_FAIL:
 			nicRxUninitialize(prAdapter);
 			nicTxRelease(prAdapter, FALSE);
 			/* System Service Uninitialization */
 			nicUninitSystemService(prAdapter);
-		/* fallthrough */
+			kal_fallthrough;
 		case INIT_ADAPTER_FAIL:
-		/* fallthrough */
+			kal_fallthrough;
 		case DRIVER_OWN_FAIL:
 			nicReleaseAdapterMemory(prAdapter);
 			break;
@@ -888,6 +893,9 @@ uint32_t wlanAdapterStop(IN struct ADAPTER *prAdapter)
 	/* Release all CMD/MGMT/SEC frame in command queue */
 	kalClearCommandQueue(prAdapter->prGlueInfo);
 
+	/* Release all CMD in pending command queue */
+	wlanClearPendingCommandQueue(prAdapter);
+
 #if CFG_SUPPORT_MULTITHREAD
 
 	/* Flush all items in queues for multi-thread */
@@ -906,7 +914,12 @@ uint32_t wlanAdapterStop(IN struct ADAPTER *prAdapter)
 		!wlanIsChipNoAck(prAdapter)
 		&& !kalIsCardRemoved(prAdapter->prGlueInfo)) {
 		wlanPowerOffWifi(prAdapter);
-	 }
+	 } else {
+#if defined(_HIF_USB)
+		DBGLOG(INIT, ERROR, "Cannot WF pwr-off, release HIF TRX-res");
+		HAL_CANCEL_TX_RX(prAdapter);
+#endif
+	}
 
 	nicRxUninitialize(prAdapter);
 
@@ -982,9 +995,9 @@ void wlanIST(IN struct ADAPTER *prAdapter)
 
 #if CFG_ENABLE_WAKE_LOCK
 		if (KAL_WAKE_LOCK_ACTIVE(prAdapter,
-					 &prAdapter->prGlueInfo->rIntrWakeLock))
+					 prAdapter->prGlueInfo->prIntrWakeLock))
 			KAL_WAKE_UNLOCK(prAdapter,
-					&prAdapter->prGlueInfo->rIntrWakeLock);
+					prAdapter->prGlueInfo->prIntrWakeLock);
 #endif
 	}
 
@@ -1154,8 +1167,6 @@ uint32_t wlanProcessCommandQueue(IN struct ADAPTER
 						(prCmdInfo->pucInfoBuffer);
 				prKey = (struct CMD_802_11_KEY *)
 						(prWifiCmd->aucBuffer);
-				prBssInfo =
-					prAdapter->aprBssInfo[prKey->ucBssIdx];
 
 				if ((prCmdInfo->ucCID != CMD_ID_ADD_REMOVE_KEY)
 				    || !prKey->ucTxKey
@@ -1164,6 +1175,15 @@ uint32_t wlanProcessCommandQueue(IN struct ADAPTER
 				    prKey->ucAlgorithmId != CIPHER_SUITE_TKIP &&
 				    prKey->ucAlgorithmId != CIPHER_SUITE_CCMP))
 					break;
+
+				if (prKey->ucBssIdx > MAX_BSSID_NUM) {
+					eFrameAction = FRAME_ACTION_DROP_PKT;
+					break;
+				}
+
+				prBssInfo =
+					prAdapter->aprBssInfo[prKey->ucBssIdx];
+
 				switch (prBssInfo->eKeyAction) {
 				case SEC_DROP_KEY_COMMAND:
 					eFrameAction = FRAME_ACTION_DROP_PKT;
@@ -1831,6 +1851,10 @@ void wlanClearTxCommandDoneQueue(IN struct ADAPTER
 /*----------------------------------------------------------------------------*/
 void wlanClearDataQueue(IN struct ADAPTER *prAdapter)
 {
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+	nicTxSwTsoClearSkbQ(prAdapter);
+#endif
+
 	if (HAL_IS_TX_DIRECT())
 		nicTxDirectClearHifQ(prAdapter);
 	else {
@@ -1897,7 +1921,11 @@ void wlanClearDataQueue(IN struct ADAPTER *prAdapter)
 
 		/* <2> Return sk buffer */
 		for (i = 0; i < TX_PORT_NUM; i++) {
+			if (!QUEUE_GET_HEAD(prDataPort[i]))
+				continue;
 			nicTxReleaseMsduResource(prAdapter, (struct MSDU_INFO *)
+						QUEUE_GET_HEAD(prDataPort[i]));
+			nicTxFreeMsduInfoPacket(prAdapter, (struct MSDU_INFO *)
 						QUEUE_GET_HEAD(prDataPort[i]));
 			nicTxReturnMsduInfo(prAdapter, (struct MSDU_INFO *)
 						QUEUE_GET_HEAD(prDataPort[i]));
@@ -1951,6 +1979,50 @@ void wlanClearRxToOsQueue(IN struct ADAPTER *prAdapter)
 
 }
 #endif
+
+/*----------------------------------------------------------------------------*/
+/*!
+ * \brief This routine is used to clear all commands in pending command queue
+ * \param prAdapter  Pointer of Adapter Data Structure
+ *
+ * \retval none
+ */
+/*----------------------------------------------------------------------------*/
+void wlanClearPendingCommandQueue(IN struct ADAPTER *prAdapter)
+{
+	struct QUE rTempCmdQue;
+	struct QUE *prTempCmdQue = &rTempCmdQue;
+	struct QUE_ENTRY *prQueueEntry = (struct QUE_ENTRY *) NULL;
+	struct CMD_INFO *prCmdInfo = (struct CMD_INFO *) NULL;
+
+	KAL_SPIN_LOCK_DECLARATION();
+	QUEUE_INITIALIZE(prTempCmdQue);
+
+	ASSERT(prAdapter);
+
+	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_CMD_PENDING);
+	QUEUE_MOVE_ALL(prTempCmdQue, &prAdapter->rPendingCmdQueue);
+	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_CMD_PENDING);
+
+	QUEUE_REMOVE_HEAD(prTempCmdQue, prQueueEntry,
+			  struct QUE_ENTRY *);
+	while (prQueueEntry) {
+		prCmdInfo = (struct CMD_INFO *) prQueueEntry;
+
+		if (prCmdInfo->pfCmdTimeoutHandler)
+			prCmdInfo->pfCmdTimeoutHandler(prAdapter, prCmdInfo);
+		else
+			wlanReleaseCommand(prAdapter, prCmdInfo,
+					   TX_RESULT_QUEUE_CLEARANCE);
+
+		nicTxCancelSendingCmd(prAdapter, prCmdInfo);
+
+		cmdBufFreeCmdInfo(prAdapter, prCmdInfo);
+
+		QUEUE_REMOVE_HEAD(prTempCmdQue, prQueueEntry,
+				  struct QUE_ENTRY *);
+	}
+}
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -6249,6 +6321,9 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 	prWifiVar->ucApAllowHtVhtTkip = (uint8_t) wlanCfgGetUint32(
 				prAdapter, "ApAllowHtVhtTkip",
 				FEATURE_DISABLED);
+	prWifiVar->fgReuseRSNIE = (uint32_t) wlanCfgGetUint32(
+				prAdapter, "ReuseRSNIE",
+				FEATURE_DISABLED);
 
 	prWifiVar->ucNSS = (uint8_t) wlanCfgGetUint32(prAdapter, "Nss", 2);
 
@@ -6433,6 +6508,24 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 	prWifiVar->ucTpTestMode = (uint8_t) wlanCfgGetUint32(
 					prAdapter, "TpTestMode", 0);
 
+#if CFG_SUPPORT_TPENHANCE_MODE
+	/* tp enhance config */
+	prWifiVar->ucTpEnhanceEnable = (uint8_t) wlanCfgGetUint32(
+					prAdapter, "TpEnhanceEnable", 0);
+	prWifiVar->ucTpEnhancePktNum = (uint8_t) wlanCfgGetUint32(
+					prAdapter, "TpEnhancePktNum", 20);
+	prWifiVar->u4TpEnhanceInterval = (uint32_t) wlanCfgGetUint32(
+					prAdapter, "TpEnhanceInterval", 6000);
+	prWifiVar->cTpEnhanceRSSI = (int8_t) wlanCfgGetInt32(
+					prAdapter, "TpEnhanceRSSI", -65);
+	prWifiVar->u4TpEnhanceThreshold = (uint32_t) wlanCfgGetUint32(
+					prAdapter, "TpEnhanceThreshold", 300);
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
+	prWifiVar->ucTputThresholdMbps = (uint32_t) wlanCfgGetUint32(
+					prAdapter, "TputThresholdMbps", 50);
+	prWifiVar->ucDisMixRegionSetup = (uint8_t) wlanCfgGetUint32(
+					prAdapter, "DisMixRegionSetup", 0);
+
 #if IS_ENABLED(CFG_RX_NAPI_SUPPORT)
 	prWifiVar->ucRxNapiEnable = (uint8_t) wlanCfgGetUint32(
 					prAdapter, "RxNapi", 0);
@@ -6445,6 +6538,16 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 	prWifiVar->ucRxNapiThreshold = (uint8_t) wlanCfgGetUint32(
 					prAdapter, "RxNapiThreshold", 50);
 #endif /* CFG_RX_NAPI_SUPPORT */
+	/*
+	* Format of EdcaSet
+	* [3:0]   - AC idx, follow WMM_AC_XX_INDEX
+	* [7:4]   - AIFS
+	* [11:8]  - CWmin
+	* [15:12] - CWman
+	* [31:16] - TXOP
+	*/
+	prWifiVar->u4ForceEdca = (uint32_t) wlanCfgGetUint32(
+					prAdapter, "EdcaSet", 0);
 
 #if 0
 	prWifiVar->ucSigmaTestMode = (uint8_t) wlanCfgGetUint32(
@@ -6486,6 +6589,10 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 #endif
 	prWifiVar->ucEnforcePSMode = (uint8_t) wlanCfgGetUint32(
 		prAdapter, "EnforcePSMode", Param_PowerModeMax);
+	prWifiVar->ucDisSuspendScrOff = (uint8_t) wlanCfgGetUint32(
+		prAdapter, "DisSuspendScrOff", FEATURE_DISABLED);
+	prWifiVar->ucMobileLikeSuspend = (uint8_t) wlanCfgGetUint32(
+		prAdapter, "MobileLikeSuspend", FEATURE_DISABLED);
 #if CFG_SUPPORT_REPLAY_DETECTION
 	prWifiVar->ucRpyDetectOffload = (uint8_t) wlanCfgGetUint32(
 					prAdapter, "rpydetectoffload",
@@ -6664,7 +6771,6 @@ void wlanInitFeatureOption(IN struct ADAPTER *prAdapter)
 		"Ed5GEU", ED_CCA_BW20_5G_DEFAULT);
 	prWifiVar->ucEnforceCAM2G =
 		(uint8_t) wlanCfgGetUint32(prAdapter, "EnforceCAM2G", 0);
-
 }
 
 void wlanCfgSetSwCtrl(IN struct ADAPTER *prAdapter)
@@ -7337,7 +7443,7 @@ textresume:
 					x++;
 					continue;
 				}
-				/* FALLTHRU */
+				kal_fallthrough;
 			case '\n':
 				/* \ <lf> -> line continuation */
 				x++;
@@ -8515,8 +8621,12 @@ void wlanTxLifetimeTagPacket(IN struct ADAPTER *prAdapter,
 {
 	struct PKT_PROFILE *prPktProfile = &prMsduInfo->rPktProfile;
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+	struct STA_RECORD *prStaRec;
+#else
 	if (!wlanTxLifetimeIsProfilingEnabled(prAdapter))
 		return;
+#endif
 
 	switch (eTag) {
 	case TX_PROF_TAG_OS_TO_DRV:
@@ -8537,6 +8647,13 @@ void wlanTxLifetimeTagPacket(IN struct ADAPTER *prAdapter,
 			/* Packet enqueue time */
 			prPktProfile->rEnqueueTimestamp = (OS_SYSTIME)
 							  kalGetTimeTick();
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+		prStaRec = cnmGetStaRecByAddress(prAdapter,
+					prMsduInfo->ucBssIndex,
+					prMsduInfo->aucEthDestAddr);
+		if (prStaRec)
+			prStaRec->u8TotalTxBytes += prMsduInfo->u2FrameLength;
+#endif
 		}
 		break;
 
@@ -10145,8 +10262,11 @@ void wlanSuspendPmHandle(struct GLUE_INFO *prGlueInfo)
 	if (prGlueInfo->prAdapter->rWifiVar.ucWow &&
 		(prGlueInfo->prAdapter->rWowCtrl.fgWowEnable ||
 		prGlueInfo->prAdapter->rWifiVar.ucAdvPws)) {
+#if CFG_SUPPORT_WAKE_ON_PNO != 1
 		if (kalGetMediaStateIndicated(prGlueInfo) ==
-			PARAM_MEDIA_STATE_CONNECTED) {
+			 PARAM_MEDIA_STATE_CONNECTED)
+#endif
+		{
 			/* AIS bss enter wow power mode, default fast pws */
 			ePwrMode = prGlueInfo->prAdapter->rWifiVar.ucWowPwsMode;
 			idx = prGlueInfo->prAdapter->prAisBssInfo->ucBssIndex;
@@ -10707,3 +10827,361 @@ out:
 			   MCS_INFO_SAMPLE_PERIOD);
 }
 #endif
+
+#if CFG_SUPPORT_TPENHANCE_MODE
+inline uint64_t wlanTpeTimeUs(void)
+{
+	struct timeval _now;
+
+	do_gettimeofday(&_now);
+	return (uint64_t)((int)_now.tv_sec * 1000000 + (int)_now.tv_usec);
+}
+
+void wlanTpeUpdate(struct GLUE_INFO *prGlueInfo, struct QUE *prSrcQue,
+		uint8_t ucPktJump)
+{
+	int addPktCnt = 0;
+	uint8_t *pucIpHeader = NULL;
+	uint8_t *pucPktHeadBuf = NULL;
+	uint8_t ucHitPkt;
+	uint16_t *pu2DPort, *pu2SPort;
+	uint32_t *pu4Ip;
+	uint32_t u4Cnt, u4Cnt2, u4PktMax;
+	struct QUE rTempQue;
+	struct QUE *prTempQue = &rTempQue;
+	struct QUE_ENTRY *prQueueEntry = NULL;
+	struct sk_buff *prSkb;
+	struct TPENHANCE_PKT_MAP auPktMap[TPENHANCE_SESSION_MAP_LEN];
+	struct TPENHANCE_PKT_MAP *prPktMap;
+
+	ASSERT(prGlueInfo);
+
+	if (!prSrcQue || QUEUE_IS_EMPTY(prSrcQue)) {
+		DBGLOG(QM, TRACE, "Nothing to handle\n");
+		return;
+	}
+
+	DBGLOG(HAL, LOUD, "ENTER wlanTpeUpdate.\n");
+	/* Resource init */
+	QUEUE_INITIALIZE(prTempQue);
+	kalMemZero(auPktMap, sizeof(auPktMap));
+	u4PktMax = prSrcQue->u4NumElem;
+
+	/* Queue revert */
+	while (QUEUE_IS_NOT_EMPTY(prSrcQue)) {
+		QUEUE_REMOVE_HEAD(prSrcQue, prQueueEntry,
+			  struct QUE_ENTRY *);
+		QUEUE_INSERT_HEAD(prTempQue, prQueueEntry);
+	}
+	QUEUE_MOVE_ALL(prSrcQue, prTempQue);
+
+	/* Loop all pkts in waiting-Q */
+	for (u4Cnt = 0; u4Cnt < u4PktMax; u4Cnt++) {
+		QUEUE_REMOVE_HEAD(prSrcQue, prQueueEntry,
+			  struct QUE_ENTRY *);
+		if (!prQueueEntry)
+			break;
+		prSkb = (struct sk_buff *)
+					  GLUE_GET_PKT_DESCRIPTOR(
+					  prQueueEntry);
+		pucPktHeadBuf = prSkb->data;
+		pucIpHeader = &pucPktHeadBuf[ETHER_HEADER_LEN];
+		pu4Ip = (uint32_t *)(pucIpHeader + IPV4_HDR_IP_SRC_ADDR_OFFSET);
+		pu2SPort = (uint16_t *)(pucIpHeader + IPV4_HDR_LEN);
+		pu2DPort = (uint16_t *)(pucIpHeader +
+					IPV4_HDR_LEN + 2);
+		/* Check if having this session ack already */
+		ucHitPkt = FALSE;
+		for (u4Cnt2 = 0; u4Cnt2 < ARRAY_SIZE(auPktMap);
+			u4Cnt2++) {
+			if (u4PktMax < TPENHANCE_PKT_LATCH_MIN)
+				break;
+
+			prPktMap = &auPktMap[u4Cnt2];
+
+			if (prPktMap->au2SPort == 0) {
+				/*
+				 * This is a new session.
+				 * Create a new record and keep this ack.
+				 */
+				prPktMap->au2SPort = *pu2SPort;
+				prPktMap->au2DPort = *pu2DPort;
+				prPktMap->au4Ip = *pu4Ip;
+				prPktMap->au2Hit++;
+				break;
+			}
+
+			if (prPktMap->au2SPort == *pu2SPort
+				&& prPktMap->au2DPort == *pu2DPort
+				&& prPktMap->au4Ip == *pu4Ip) {
+				/* A duplicated session found */
+				if (ucPktJump == prPktMap->au2Hit) {
+					/*
+					 * reset hit counter &&
+					 * keep this ack
+					 */
+					prPktMap->au2Hit = 0;
+					DBGLOG(HAL, LOUD,
+						"TCP Ack target Hit.\n");
+				} else {
+					prPktMap->au2Hit++;
+					ucHitPkt = TRUE;
+				}
+				break;
+			}
+		}
+
+		if (ucHitPkt)
+			dev_kfree_skb(prSkb);
+		else {
+			uint8_t ucBssIndex =
+				GLUE_GET_PKT_BSS_IDX(prSkb);
+			uint16_t u2QueueIdx =
+				skb_get_queue_mapping(prSkb);
+
+			GLUE_INC_REF_CNT(
+			prGlueInfo->ai4TxPendingFrameNumPerQueue
+			[ucBssIndex][u2QueueIdx]);
+
+			GLUE_INC_REF_CNT(
+			prGlueInfo->i4TxPendingFrameNum);
+			QUEUE_INSERT_TAIL(prSrcQue, prQueueEntry);
+			addPktCnt++;
+		}
+	}
+
+	/* Queue revert */
+	while (QUEUE_IS_NOT_EMPTY(prSrcQue)) {
+		QUEUE_REMOVE_HEAD(prSrcQue, prQueueEntry,
+				struct QUE_ENTRY *);
+		QUEUE_INSERT_HEAD(prTempQue, prQueueEntry);
+	}
+	QUEUE_MOVE_ALL(prSrcQue, prTempQue);
+
+
+	if (addPktCnt != prSrcQue->u4NumElem)
+		DBGLOG(QM, ERROR, "mismatch : %d != %d\n",
+			addPktCnt, prSrcQue->u4NumElem);
+}
+
+void wlanTpeFlush(struct GLUE_INFO *prGlueInfo)
+{
+	struct QUE rTempQue;
+	struct QUE *prTempQue = &rTempQue;
+	struct QUE *prTpeAckQueue;
+	struct QUE *prTxQueue;
+
+	GLUE_SPIN_LOCK_DECLARATION();
+
+	ASSERT(prGlueInfo);
+
+	prTpeAckQueue = &prGlueInfo->rTpeAckQueue;
+	prTxQueue = &prGlueInfo->rTxQueue;
+
+	if (QUEUE_IS_EMPTY(prTpeAckQueue))
+		return;
+
+	QUEUE_INITIALIZE(prTempQue);
+
+	/* Ack-Q clean first */
+	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_TXACK_QUE);
+	QUEUE_CONCATENATE_QUEUES(prTempQue, prTpeAckQueue);
+	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_TXACK_QUE);
+
+	wlanTpeUpdate(prGlueInfo, prTempQue,
+		prGlueInfo->prAdapter->rWifiVar.ucTpEnhancePktNum);
+
+	prGlueInfo->u8TpeTimestamp = wlanTpeTimeUs();
+
+	/* Append to Tx-Q */
+	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_TX_QUE);
+	QUEUE_CONCATENATE_QUEUES(prTxQueue, prTempQue);
+	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_TX_QUE);
+}
+
+#if KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE
+void wlanTpeTimeoutHandler(struct timer_list *timer)
+#else
+void wlanTpeTimeoutHandler(unsigned long data)
+#endif
+{
+
+#if KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE
+	struct GLUE_INFO *prGlueInfo =
+		from_timer(prGlueInfo, timer, rTpeTimer);
+#else
+	struct GLUE_INFO *prGlueInfo = (struct GLUE_INFO *)data;
+#endif
+
+	ASSERT(prGlueInfo);
+	if (QUEUE_IS_NOT_EMPTY(&prGlueInfo->rTpeAckQueue)) {
+		/* There are some pkts in ack-Q */
+		/* de-Q all pkts right now */
+		wlanTpeFlush(prGlueInfo);
+		kalSetEvent(prGlueInfo); /* Wakeup TX */
+	}
+}
+
+void wlanTpeInit(struct GLUE_INFO *prGlueInfo)
+{
+	struct QUE *prTpeAckQueue;
+	struct ADAPTER *prAdapter;
+
+	if (prGlueInfo == NULL) {
+		DBGLOG(INIT, ERROR, "prGlueInfo is NULL\n");
+		return;
+	}
+
+	prAdapter = prGlueInfo->prAdapter;
+
+	if (!prAdapter->rWifiVar.ucTpEnhanceEnable)
+		return;
+
+	prTpeAckQueue = &prGlueInfo->rTpeAckQueue;
+	QUEUE_INITIALIZE(prTpeAckQueue);
+	prGlueInfo->u4TpeMaxPktNum = TPENHANCE_PKT_KEEP_MAX;
+	prGlueInfo->u4TpeTimeout =
+		prAdapter->rWifiVar.u4TpEnhanceInterval; /* us */
+
+	DBGLOG(HAL, STATE,
+		"InitTpEnhance. PktNum:%d. Interval = %d. RSSI = %d\n",
+		prAdapter->rWifiVar.ucTpEnhancePktNum,
+		prAdapter->rWifiVar.u4TpEnhanceInterval,
+		prAdapter->rWifiVar.cTpEnhanceRSSI);
+
+#if KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE
+	timer_setup(&prGlueInfo->rTpeTimer,
+			wlanTpeTimeoutHandler, 0);
+#else
+	init_timer(&prGlueInfo->rTpeTimer);
+	prGlueInfo->rTpeTimer.function = wlanTpeTimeoutHandler;
+	prGlueInfo->rTpeTimer.data = ((unsigned long) prGlueInfo);
+	prGlueInfo->rTpeTimer.expires = jiffies - 10;
+	add_timer(&prGlueInfo->rTpeTimer);
+#endif
+}
+
+void wlanTpeUninit(struct GLUE_INFO *prGlueInfo)
+{
+	struct ADAPTER *prAdapter = NULL;
+
+	if (prGlueInfo == NULL) {
+		DBGLOG(INIT, ERROR, "prGlueInfo is NULL\n");
+		return;
+	}
+
+	prAdapter = prGlueInfo->prAdapter;
+	if (!prAdapter->rWifiVar.ucTpEnhanceEnable)
+		return;
+
+	del_timer_sync(&(prGlueInfo->rTpeTimer));
+}
+
+int wlanTpeProcess(struct GLUE_INFO *prGlueInfo,
+			struct sk_buff *prSkb,
+			struct net_device *prDev)
+{
+	struct QUE_ENTRY *prQueueEntry = NULL;
+	struct ADAPTER *prAdapter;
+	struct QUE *prTpeAckQueue;
+	struct WIFI_VAR *prWifiVar;
+	uint64_t u8Nowus;
+	int8_t cRssi;
+	struct PERF_MONITOR_T *prPerMonitor =
+		&prGlueInfo->prAdapter->rPerMonitor;
+
+	ASSERT(prGlueInfo);
+
+	prAdapter = prGlueInfo->prAdapter;
+	ASSERT(prAdapter);
+
+	prWifiVar = &prAdapter->rWifiVar;
+
+	if (!prWifiVar->ucTpEnhanceEnable)
+		return WLAN_STATUS_PENDING;
+
+	prTpeAckQueue = &prGlueInfo->rTpeAckQueue;
+
+	/* ranged from (-128 ~ 30) in unit of dBm */
+	cRssi = prAdapter->rLinkQuality.cRssi;
+
+	u8Nowus = wlanTpeTimeUs();
+
+	if (cRssi < prWifiVar->cTpEnhanceRSSI)
+		goto TpeEndFlush;
+	else if (!GLUE_TEST_PKT_FLAG(prSkb, ENUM_PKT_TCP_ACK))
+		goto TpeEndFlush;
+	else if (KAL_TEST_BIT(PERF_MON_RUNNING_BIT,
+		prPerMonitor->ulPerfMonFlag)) {
+		unsigned long ulTputMbps = 0;
+
+		ASSERT(prSkb);
+		ASSERT(prDev);
+		ASSERT(prGlueInfo);
+
+		/* TODO: check TP per BSS? */
+		ulTputMbps = prPerMonitor->ulWlanRxTp +
+				prPerMonitor->ulP2PRxTp;
+		ulTputMbps = ulTputMbps >> 17;
+
+		DBGLOG(HAL, LOUD, "Rx TputMbps %d,Mrxtp 0x%lx.\n",
+			ulTputMbps, prPerMonitor->ulWlanRxTp);
+
+		if (ulTputMbps < prWifiVar->u4TpEnhanceThreshold)
+			goto TpeEndFlush;
+	}
+
+	/* more space to Q-in? */
+	if (prTpeAckQueue->u4NumElem < prGlueInfo->u4TpeMaxPktNum) {
+		/* Q-ing status */
+		GLUE_SPIN_LOCK_DECLARATION();
+		GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_TXACK_QUE);
+
+		/* Save timestamp for first pkt in Q */
+		if (QUEUE_IS_EMPTY(prTpeAckQueue))
+			prGlueInfo->u8TpeTimestamp = u8Nowus;
+
+		prQueueEntry = (struct QUE_ENTRY *)
+				GLUE_GET_PKT_QUEUE_ENTRY(prSkb);
+
+		QUEUE_INSERT_TAIL(prTpeAckQueue, prQueueEntry);
+		GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_TXACK_QUE);
+
+		/* Update NetDev statisitcs */
+		prDev->stats.tx_bytes += prSkb->len;
+		prDev->stats.tx_packets++;
+
+		if (u8Nowus >= prGlueInfo->u8TpeTimestamp +
+			prGlueInfo->u4TpeTimeout) {
+			/* Timeout already, flush out directly. */
+			if (timer_pending(&prGlueInfo->rTpeTimer))
+				del_timer(&prGlueInfo->rTpeTimer);
+			wlanTpeFlush(prGlueInfo);
+			kalSetEvent(prGlueInfo);
+		} else {
+			/* Setup a timer for next flushing */
+			if (!timer_pending(&prGlueInfo->rTpeTimer))
+				mod_timer(&prGlueInfo->rTpeTimer,
+					jiffies + usecs_to_jiffies(
+					prGlueInfo->u4TpeTimeout * 2));
+		}
+		return WLAN_STATUS_SUCCESS;
+	} else if (QUEUE_IS_NOT_EMPTY(prTpeAckQueue)) {
+		/* cannot Q, try to flush out */
+		/* Flush ack-Q */
+		wlanTpeFlush(prGlueInfo);
+	}
+
+TpeEndFlush:
+	/* Addtional check if Tpe-Q should be flushed! */
+	if (QUEUE_IS_NOT_EMPTY(prTpeAckQueue)
+		&&
+		(prTpeAckQueue->u4NumElem >= prGlueInfo->u4TpeMaxPktNum
+		|| u8Nowus >= prGlueInfo->u8TpeTimestamp +
+			prGlueInfo->u4TpeTimeout)) {
+		wlanTpeFlush(prGlueInfo);
+	}
+	return WLAN_STATUS_PENDING;
+}
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
+

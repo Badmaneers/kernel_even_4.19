@@ -139,6 +139,9 @@ static probe_card pfWlanProbe;
 static remove_card pfWlanRemove;
 
 static u_int8_t g_fgDriverProbed = FALSE;
+#if (CFG_WLAN_RM_MUTEX_SUPPORT == 1)
+static struct mutex wlanRemove_mutex;
+#endif
 
 static struct usb_driver mtk_usb_driver = {
 	.name = "wlan",		/* "MTK USB WLAN Driver" */
@@ -238,9 +241,14 @@ static void mtk_usb_disconnect(struct usb_interface *intf)
 
 	ASSERT(intf);
 	prGlueInfo  = (struct GLUE_INFO *)usb_get_intfdata(intf);
+	if (prGlueInfo)
+		glUsbSetState(&prGlueInfo->rHifInfo, USB_STATE_LINK_DOWN);
+	else
+		DBGLOG(HAL, ERROR, "prGlueInfo is NULL!!\n");
 
-	glUsbSetState(&prGlueInfo->rHifInfo, USB_STATE_LINK_DOWN);
-
+#if (CFG_WLAN_RM_MUTEX_SUPPORT == 1)
+	mutex_lock(&wlanRemove_mutex);
+#endif
 	if (g_fgDriverProbed)
 		pfWlanRemove();
 
@@ -248,6 +256,9 @@ static void mtk_usb_disconnect(struct usb_interface *intf)
 	usb_put_dev(interface_to_usbdev(intf));
 
 	g_fgDriverProbed = FALSE;
+#if (CFG_WLAN_RM_MUTEX_SUPPORT == 1)
+	mutex_unlock(&wlanRemove_mutex);
+#endif
 
 	DBGLOG(HAL, STATE, "mtk_usb_disconnect() done\n");
 }
@@ -255,14 +266,23 @@ static void mtk_usb_disconnect(struct usb_interface *intf)
 static int mtk_usb_suspend(struct usb_interface *intf, pm_message_t message)
 {
 	struct GLUE_INFO *prGlueInfo = (struct GLUE_INFO *)usb_get_intfdata(intf);
-	uint8_t count = 0;
+	uint32_t count = 0;
 	int ret = 0;
+	uint8_t state = 0;
 
 	DBGLOG(HAL, STATE, "mtk_usb_suspend()\n");
 
 	if (kalIsResetting()) {
 		DBGLOG(HAL, WARN, "Chip resetting, skip\n");
 		return -1;
+	}
+
+	if (!halIsHifStateReady(prGlueInfo->prAdapter, &state)) {
+		DBGLOG(HAL, WARN, "driver is not ready, state:%d\n", state);
+		if (state == USB_STATE_LINK_UP)
+			glUsbSetState(&prGlueInfo->rHifInfo, USB_STATE_READY);
+		else
+			return -1;
 	}
 
 	/* Stop upper layers calling the device hard_start_xmit routine. */
@@ -278,12 +298,12 @@ static int mtk_usb_suspend(struct usb_interface *intf, pm_message_t message)
 	halPreSuspendCmd(prGlueInfo->prAdapter);
 
 	while (prGlueInfo->rHifInfo.state != USB_STATE_PRE_SUSPEND_DONE) {
-		if (count > 50) {
+		if (count > 500) {
 			DBGLOG(HAL, ERROR, "pre_suspend timeout\n");
 				ret = -EFAULT;
 				break;
 		}
-		msleep(20);
+		mdelay(2);
 		count++;
 	}
 
@@ -304,7 +324,7 @@ static int mtk_usb_suspend(struct usb_interface *intf, pm_message_t message)
 static int mtk_usb_resume(struct usb_interface *intf)
 {
 	int ret = 0;
-	uint8_t count = 0;
+	uint32_t count = 0;
 	struct GLUE_INFO *prGlueInfo = (struct GLUE_INFO *)usb_get_intfdata(intf);
 
 	DBGLOG(HAL, STATE, "mtk_usb_resume()\n");
@@ -330,11 +350,11 @@ static int mtk_usb_resume(struct usb_interface *intf)
 	halPreResumeCmd(prGlueInfo->prAdapter);
 
 	while (prGlueInfo->rHifInfo.state != USB_STATE_LINK_UP) {
-		if (count > 50) {
+		if (count > 500) {
 			DBGLOG(HAL, ERROR, "pre_resume timeout\n");
 			break;
 		}
-		msleep(20);
+		mdelay(2);
 		count++;
 	}
 
@@ -343,7 +363,7 @@ static int mtk_usb_resume(struct usb_interface *intf)
 	wlanResumePmHandle(prGlueInfo);
 
 	/* Allow upper layers to call the device hard_start_xmit routine. */
-	netif_tx_start_all_queues(prGlueInfo->prDevHandler);
+	netif_tx_wake_all_queues(prGlueInfo->prDevHandler);
 
 	/* change to READY state to allow cfg80211 ops */
 	glUsbSetState(&prGlueInfo->rHifInfo, USB_STATE_READY);
@@ -571,6 +591,9 @@ uint32_t glRegisterBus(probe_card pfProbe, remove_card pfRemove)
 
 	pfWlanProbe = pfProbe;
 	pfWlanRemove = pfRemove;
+#if (CFG_WLAN_RM_MUTEX_SUPPORT == 1)
+	mutex_init(&wlanRemove_mutex);
+#endif
 
 	mtk_usb_driver.probe = mtk_usb_probe;
 	mtk_usb_driver.disconnect = mtk_usb_disconnect;
@@ -597,10 +620,16 @@ uint32_t glRegisterBus(probe_card pfProbe, remove_card pfRemove)
 /*----------------------------------------------------------------------------*/
 void glUnregisterBus(remove_card pfRemove)
 {
+#if (CFG_WLAN_RM_MUTEX_SUPPORT == 1)
+	mutex_lock(&wlanRemove_mutex);
+#endif
 	if (g_fgDriverProbed) {
 		pfRemove();
 		g_fgDriverProbed = FALSE;
 	}
+#if (CFG_WLAN_RM_MUTEX_SUPPORT == 1)
+	mutex_unlock(&wlanRemove_mutex);
+#endif
 	usb_deregister(&mtk_usb_driver);
 }				/* end of glUnregisterBus() */
 

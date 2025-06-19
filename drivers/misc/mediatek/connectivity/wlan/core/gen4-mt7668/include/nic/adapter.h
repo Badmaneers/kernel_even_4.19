@@ -253,6 +253,7 @@ typedef struct _CONNECTION_SETTINGS_T {
 	struct OWE_INFO_T rOweInfo;
 #endif
 	struct LINK_MGMT rBlackList;
+	struct RSNXE rRsnXE;
 } CONNECTION_SETTINGS_T, *P_CONNECTION_SETTINGS_T;
 
 struct _BSS_INFO_T {
@@ -372,8 +373,15 @@ struct _BSS_INFO_T {
 	UINT_32 u4RsnSelectedGroupCipher;
 	UINT_32 u4RsnSelectedPairwiseCipher;
 	UINT_32 u4RsnSelectedAKMSuite;
+#if CFG_SUPPORT_SOFTAP_WPA3
+	UINT_32 u4RsnSelectedAKMSuite2;
+	UINT_16 u4RsnSelectedAKMSuiteCnt;
+#endif
 	UINT_16 u2RsnSelectedCapInfo;
 
+#if CFG_SUPPORT_SOFTAP_WPA3
+	UINT_16 authAlgNum;
+#endif
 	UINT_8 ucOpChangeChannelWidth; /* The OpMode channel width that we want to change to*/
 					/* 0:20MHz, 1:40MHz, 2:80MHz, 3:160MHz 4:80+80MHz */
 	BOOLEAN fgIsOpChangeChannelWidth;
@@ -703,6 +711,7 @@ typedef struct _WIFI_VAR_T {
 	UINT_8 ucP2pGoVht;
 	UINT_8 ucP2pGcHt;
 	UINT_8 ucP2pGcVht;
+	UINT_8 ucDisP2pPs;
 
 	UINT_8 ucAmpduTx;
 	UINT_8 ucAmpduRx;
@@ -895,13 +904,21 @@ typedef struct _WIFI_VAR_T {
 #ifdef CFG_SUPPORT_ADJUST_JOIN_CH_REQ_INTERVAL
 	UINT_32 u4AisJoinChReqIntervel;
 #endif
+#if defined(_HIF_USB)
+	BOOLEAN fgEfuseCheck;
+#endif
+#if CFG_SUPPORT_WAC
+	UINT_16  u2WACIELen;
+	UINT_8   aucWACIECache[ELEM_MAX_LEN_WAC_INFO];
+	BOOLEAN	 fgEnableWACIE;
+#endif
 } WIFI_VAR_T, *P_WIFI_VAR_T;	/* end of _WIFI_VAR_T */
 
 /* cnm_timer module */
 typedef struct {
 	LINK_T rLinkHead;
 	OS_SYSTIME rNextExpiredSysTime;
-#if defined(CONFIG_ANDROID) && (CFG_ENABLE_WAKE_LOCK)
+#if CFG_ENABLE_WAKE_LOCK
 	KAL_WAKE_LOCK_T rWakeLock;
 #endif
 	BOOLEAN fgWakeLocked;
@@ -1111,6 +1128,7 @@ struct _ADAPTER_T {
 	/* Set by callback to make sure WOW process done before system suspend */
 	BOOLEAN fgSetPfCapabilityDone;
 	BOOLEAN fgSetWowDone;
+	BOOLEAN fgSetMdnsDone;
 
 	BOOLEAN fgForceFwOwn;
 
@@ -1146,6 +1164,11 @@ struct _ADAPTER_T {
 	QUE_T rTxP1Queue;
 #else
 	QUE_T rTxPQueue[TX_PORT_NUM];
+#endif
+#if CFG_SUPPORT_CFG80211_AUTH
+#if CFG_SUPPORT_CFG80211_QUEUE
+	QUE_T rCfg80211Queue;
+#endif
 #endif
 	QUE_T rRxQueue;
 	QUE_T rTxDataDoneQueue;
@@ -1274,6 +1297,7 @@ struct _ADAPTER_T {
 	BOOLEAN fgIsEepromUsed;
 	BOOLEAN fgIsEfuseValid;
 	BOOLEAN fgIsEmbbededMacAddrValid;
+	BOOLEAN fgIsHwACDisabled;
 
 #if CFG_SUPPORT_PWR_LIMIT_COUNTRY
 	BOOLEAN fgIsPowerLimitTableValid;
@@ -1332,6 +1356,15 @@ struct _ADAPTER_T {
 
 #if CFG_WOW_SUPPORT
 	WOW_CTRL_T	rWowCtrl;
+#if CFG_SUPPORT_MDNS_OFFLOAD
+	struct MDNS_INFO_T rMdnsInfo;
+	BOOLEAN mdns_offload_enable;
+	UINT_8 mdns_wake_flag;
+#endif
+#endif
+
+#if CFG_SUPPORT_WOW_EINT
+	struct WOWLAN_DEV_NODE rWowlanDevNode;
 #endif
 
 /*#if (CFG_EEPROM_PAGE_ACCESS == 1)*/
@@ -1350,6 +1383,8 @@ struct _ADAPTER_T {
 	BOOLEAN fgIsSupportGetTxPower;
 	BOOLEAN fgIsEnableLpdvt;
 
+	BOOLEAN fg5gDisable;
+
 	/* SER related info */
 	UINT_8 ucSerState;
 
@@ -1360,6 +1395,7 @@ struct _ADAPTER_T {
 #if (CFG_HW_WMM_BY_BSS == 1)
 	UINT_8 ucHwWmmEnBit;
 #endif
+	unsigned long ulSuspendFlag;
 	WIFI_FEM_CFG_T rWifiFemCfg;
 
 	UINT_8 ucRModeOnlyFlag;
@@ -1369,7 +1405,9 @@ struct _ADAPTER_T {
 	struct CSI_INFO_T rCSIInfo;
 #endif
 
-
+#if CFG_SUPPORT_SCHED_SCAN
+	PARAM_SCHED_SCAN_REQUEST rSchedScanRequest;
+#endif
 };				/* end of _ADAPTER_T */
 
 /*******************************************************************************
@@ -1381,6 +1419,8 @@ struct _ADAPTER_T {
 *                           P R I V A T E   D A T A
 ********************************************************************************
 */
+#define SUSPEND_FLAG_FOR_WAKEUP_REASON (0)
+#define SUSPEND_FLAG_CLEAR_WHEN_RESUME (1)
 
 /*******************************************************************************
 *                                 M A C R O S

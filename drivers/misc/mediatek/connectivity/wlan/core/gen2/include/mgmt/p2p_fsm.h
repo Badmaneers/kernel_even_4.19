@@ -1376,6 +1376,12 @@ struct _P2P_SPECIFIC_BSS_INFO_T {
 
 	UINT_16 u2WpaIeLen;
 	UINT_8 aucWpaIeBuffer[ELEM_HDR_LEN + ELEM_MAX_LEN_WPA];
+
+	UINT_16 u2RsnxIeLen;
+	UINT_8 aucRsnxIeBuffer[ELEM_HDR_LEN + ELEM_MAX_LEN_RSN];
+
+	UINT_16 u2RsnIeLen;
+	UINT_8 aucRsnIeBuffer[ELEM_HDR_LEN + ELEM_MAX_LEN_RSN];
 };
 
 typedef struct _MSG_P2P_DEVICE_DISCOVER_T {

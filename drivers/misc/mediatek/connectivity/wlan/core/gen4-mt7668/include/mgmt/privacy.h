@@ -104,9 +104,10 @@
 #define CIPHER_SUITE_WEP128             7
 #define CIPHER_SUITE_WPI                8
 #define CIPHER_SUITE_CCMP_W_CCX         9
-#define CIPHER_SUITE_GCMP               10
+#define CIPHER_SUITE_CCMP_256           10
 #define CIPHER_SUITE_GCMP_128           11
 #define CIPHER_SUITE_GCMP_256           12
+#define CIPHER_SUITE_GCM_WPI_128        13
 
 /* Todo:: Move to register */
 #if defined(MT6630)
@@ -239,6 +240,8 @@ BOOLEAN tkipMicDecapsulate(IN P_SW_RFB_T prSwRfb, IN PUINT_8 pucMicKey);
 BOOLEAN tkipMicDecapsulateInRxHdrTransMode(IN P_SW_RFB_T prSwRfb, IN PUINT_8 pucMicKey);
 
 void secPostUpdateAddr(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo);
+
+BOOLEAN secCheckSetKeyDone(IN P_STA_RECORD_T prStaRec);
 
 /*******************************************************************************
  *                              F U N C T I O N S

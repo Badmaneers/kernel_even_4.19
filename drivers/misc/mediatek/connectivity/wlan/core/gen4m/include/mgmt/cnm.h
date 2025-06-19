@@ -93,6 +93,7 @@
 enum ENUM_CH_SWITCH_TYPE {
 	CH_SWITCH_2G, /* Default */
 	CH_SWITCH_5G,
+	CH_SWITCH_6G,
 	CH_SWITCH_NUM
 };
 #endif
@@ -210,6 +211,23 @@ enum ENUM_CNM_NETWORK_TYPE_T {
 	ENUM_CNM_NETWORK_TYPE_NUM
 };
 
+/* Priority Order !!!! */
+enum ENUM_CNM_OPMODE_REQ_T {
+	CNM_OPMODE_REQ_START      = 0,
+	CNM_OPMODE_REQ_ANT_CTRL   = 0,
+	CNM_OPMODE_REQ_DBDC       = 1,
+	CNM_OPMODE_REQ_DBDC_SCAN  = 2,
+	CNM_OPMODE_REQ_COEX       = 3,
+	CNM_OPMODE_REQ_SMARTGEAR  = 4,
+	CNM_OPMODE_REQ_USER_CONFIG     = 5,
+	CNM_OPMODE_REQ_SMARTGEAR_1T2R  = 6,
+	CNM_OPMODE_REQ_ANT_CTRL_1T2R   = 7,
+	CNM_OPMODE_REQ_COANT      = 8,
+	CNM_OPMODE_REQ_NUM        = 9,
+	CNM_OPMODE_REQ_MAX_CAP    = 10 /* just for coding */
+};
+
+
 /*******************************************************************************
  *                            P U B L I C   D A T A
  *******************************************************************************
@@ -229,6 +247,21 @@ enum ENUM_CNM_NETWORK_TYPE_T {
 	 (_prAdapter)->rCnmInfo.ucBssIndex == (_ucBssIndex))
 
 /* True if our TxNss > 1 && peer support 2ss rate && peer no Rx limit. */
+#if (CFG_SUPPORT_WIFI_6G == 1)
+#define IS_CONNECTION_NSS2(prBssInfo, prStaRec) \
+	((((prBssInfo)->ucOpTxNss > 1) && \
+	((prStaRec)->aucRxMcsBitmask[1] != 0x00) \
+	&& (((prStaRec)->u2HtCapInfo & HT_CAP_INFO_SM_POWER_SAVE) != 0)) || \
+	(((prBssInfo)->ucOpTxNss > 1) && ((((prStaRec)->u2VhtRxMcsMap \
+	& BITS(2, 3)) >> 2) != BITS(0, 1)) && ((((prStaRec)->ucVhtOpMode \
+	& VHT_OP_MODE_RX_NSS) >> VHT_OP_MODE_RX_NSS_OFFSET) > 0)) || \
+	(((prBssInfo)->ucOpTxNss > 1) \
+	&& ((prBssInfo)->eBand == BAND_6G) \
+	&& ((((prStaRec)->u2HeRxMcsMapBW80 & BITS(2, 3)) >> 2) != BITS(0, 1)) \
+	&& (((prStaRec)->u2He6gBandCapInfo \
+	& HE_6G_CAP_INFO_SM_POWER_SAVE) != 0)))
+
+#else
 #define IS_CONNECTION_NSS2(prBssInfo, prStaRec) \
 	((((prBssInfo)->ucOpTxNss > 1) && \
 	((prStaRec)->aucRxMcsBitmask[1] != 0x00) \
@@ -236,6 +269,7 @@ enum ENUM_CNM_NETWORK_TYPE_T {
 	(((prBssInfo)->ucOpTxNss > 1) && ((((prStaRec)->u2VhtRxMcsMap \
 	& BITS(2, 3)) >> 2) != BITS(0, 1)) && ((((prStaRec)->ucVhtOpMode \
 	& VHT_OP_MODE_RX_NSS) >> VHT_OP_MODE_RX_NSS_OFFSET) > 0)))
+#endif
 
 /*******************************************************************************
  *                   F U N C T I O N   D E C L A R A T I O N S
@@ -264,6 +298,8 @@ void cnmCsaDoneEvent(struct ADAPTER *prAdapter,
 #if (CFG_SUPPORT_IDC_CH_SWITCH == 1)
 uint8_t cnmIdcCsaReq(IN struct ADAPTER *prAdapter,
 	IN uint8_t ch_num, IN uint8_t ucRoleIdx);
+
+void cnmIdcSwitchSapChannel(IN struct ADAPTER *prAdapter);
 
 void cnmIdcDetectHandler(IN struct ADAPTER *prAdapter,
 	IN struct WIFI_EVENT *prEvent);
@@ -295,6 +331,9 @@ u_int8_t cnmBss80mBwPermitted(struct ADAPTER *prAdapter, uint8_t ucBssIndex);
 uint8_t cnmGetBssMaxBw(struct ADAPTER *prAdapter, uint8_t ucBssIndex);
 
 uint8_t cnmGetBssMaxBwToChnlBW(struct ADAPTER *prAdapter, uint8_t ucBssIndex);
+
+uint8_t cnmOpModeGetMaxBw(IN struct ADAPTER *prAdapter,
+	IN struct BSS_INFO *prBssInfo);
 
 struct BSS_INFO *cnmGetBssInfoAndInit(struct ADAPTER *prAdapter,
 	enum ENUM_NETWORK_TYPE eNetworkType, u_int8_t fgIsP2pDevice);
@@ -336,6 +375,7 @@ void cnmDbdcGuardTimerCallback(IN struct ADAPTER *prAdapter,
 	IN unsigned long plParamPtr);
 void cnmDbdcEventHwSwitchDone(IN struct ADAPTER *prAdapter,
 	IN struct WIFI_EVENT *prEvent);
+u_int8_t cnmDBDCIsReqPeivilegeLock(void);
 #endif /*CFG_SUPPORT_DBDC*/
 
 enum ENUM_CNM_NETWORK_TYPE_T cnmGetBssNetworkType(struct BSS_INFO *prBssInfo);
@@ -345,6 +385,11 @@ u_int8_t cnmSapIsActive(IN struct ADAPTER *prAdapter);
 u_int8_t cnmSapIsConcurrent(IN struct ADAPTER *prAdapter);
 
 struct BSS_INFO *cnmGetSapBssInfo(IN struct ADAPTER *prAdapter);
+
+struct BSS_INFO *
+cnmGetOtherSapBssInfo(
+	IN struct ADAPTER *prAdapter,
+	IN struct BSS_INFO *prSapBssInfo);
 
 void cnmOpModeGetTRxNss(
 	IN struct ADAPTER *prAdapter,
@@ -368,6 +413,16 @@ u_int8_t cnmP2pIsActive(IN struct ADAPTER *prAdapter);
 
 struct BSS_INFO *cnmGetP2pBssInfo(IN struct ADAPTER *prAdapter);
 
+bool cnmIsMccMode(IN struct ADAPTER *prAdapter);
+
+#if (CFG_SUPPORT_POWER_THROTTLING == 1 && CFG_SUPPORT_CNM_POWER_CTRL == 1)
+int cnmPowerControl(struct ADAPTER *prAdapter, uint8_t level);
+
+void cnmPowerControlErrorHandling(
+	struct ADAPTER *prAdapter,
+	struct BSS_INFO *prBssInfo
+);
+#endif
 /*******************************************************************************
  *                              F U N C T I O N S
  *******************************************************************************

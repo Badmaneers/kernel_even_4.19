@@ -194,6 +194,8 @@
 #define NUM_TC_RESOURCE_TO_STATISTICS       4
 #if CFG_SUPPORT_NCHO
 #define WLAN_CFG_ARGV_MAX 64
+#elif CFG_SUPPORT_WAKE_ON_PNO
+#define WLAN_CFG_ARGV_MAX 16
 #else
 #define WLAN_CFG_ARGV_MAX 8
 #endif
@@ -278,6 +280,18 @@
 #define ACS_DIRTINESS_LEVEL_MID		40
 #define ACS_DIRTINESS_LEVEL_LOW		32
 #endif
+
+#if CFG_SUPPORT_TPENHANCE_MODE
+#define TPENHANCE_SESSION_MAP_LEN	20
+#define TPENHANCE_PKT_LATCH_MIN	    10
+#define TPENHANCE_PKT_KEEP_MAX	    256
+struct TPENHANCE_PKT_MAP {
+	uint16_t au2SPort;
+	uint16_t au2DPort;
+	uint32_t au4Ip;
+	uint16_t au2Hit;
+};
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
 
 #if CFG_WOW_SUPPORT
 #define INVALID_WOW_WAKE_UP_REASON 255
@@ -624,102 +638,30 @@ struct WOW_CTRL {
 	uint8_t aucReserved2[3];
 };
 
-#define MDNS_CMD_ENABLE		1
-#define MDNS_CMD_DISABLE		2
-#define MDNS_CMD_ADD_RECORD	3
-#define MDNS_CMD_DEL_RECORD	4
-
-#define MDNS_NAME_MAX_LEN	100
+#if CFG_SUPPORT_MDNS_OFFLOAD
 #define MDNS_RESPONSE_RECORD_MAX_LEN	500
-#define MDNS_TXT_RR_DATA_MAX_LEN		300
-#define MDNS_SRV_RR_LEN			16
-#define	MDNS_TXT_RR_MAX_LEN		310
 #define MDNS_QUESTION_NAME_MAX_LEN	102
-#define MDNS_SERVICE_NAME_MAX_LEN	102
-#define MDNS_A_RR_LEN		14
+#define MAX_MDNS_CACHE_NUM 4
 
-#define MAX_MDNS_CACHE_NUM		6
+#define MDNS_CMD_ENABLE	1
+#define MDNS_CMD_DISABLE	2
+#define MDNS_CMD_ADD_RECORD	3
+#define MDNS_CMD_CLEAR_RECORD	4
+#define MDNS_CMD_DEL_RECORD	5
 
-struct MDNS_PTR_INFO_T {
-	uint8_t queryName[MDNS_QUESTION_NAME_MAX_LEN];
-	uint16_t queryNameLen;
-	uint16_t type;
-	uint16_t cl;
-	uint32_t ttl;
-	uint16_t dataLen;
-	uint8_t domName[MDNS_SERVICE_NAME_MAX_LEN];
-	uint16_t domNameLen;
-};
+#define MDNS_PAYLOAD_TYPE_LEN				2
+#define MDNS_PAYLOAD_CLASS_LEN				2
+#define MDNS_PAYLOAD_TTL_LEN				4
+#define MDNS_PAYLOAD_DATALEN_LEN			2
 
-struct MDNS_TXT_INFO_T {
-	uint8_t domName[MDNS_SERVICE_NAME_MAX_LEN];
-	uint16_t domNameLen;
-	uint16_t type;
-	uint16_t cl;
-	uint32_t ttl;
-	uint16_t dataLen;
-	uint8_t text[MDNS_TXT_RR_DATA_MAX_LEN];
-};
-
-struct MDNS_SRV_INFO_T {
-	uint8_t domName[MDNS_SERVICE_NAME_MAX_LEN];
-	uint16_t domNameLen;
-	uint16_t type;
-	uint16_t cl;
-	uint32_t ttl;
-	uint16_t dataLen;
-	uint16_t priority;
-	uint16_t weight;
-	uint16_t port;
-	uint8_t target[100];
-	uint16_t targetLen;
-};
-
-struct MDNS_A_INFO_T {
-	uint8_t domName[100];
-	uint16_t domNameLen;
-	uint16_t type;
-	uint16_t cl;
-	uint32_t ttl;
-	uint16_t dataLen;
-	uint32_t ipAddr;
-};
+#define MDNS_ELEM_TYPE_PTR		12
+#define MDNS_ELEM_TYPE_SRV		33
+#define MDNS_ELEM_TYPE_TXT		16
+#define MDNS_ELEM_TYPE_A		1
 
 
-struct MDNS_RESP_INFO_T {
-	uint16_t usMdnsId;
-	uint16_t usMdnsFlags;
-	uint16_t usQuestionCnt;
-	uint16_t usAnswerCnt;
-	uint16_t usAuthCnt;
-	uint16_t usAddtionCnt;
-	struct MDNS_PTR_INFO_T ptrInfo;
-	struct MDNS_TXT_INFO_T txtInfo;
-	struct MDNS_SRV_INFO_T srvInfo;
-	struct MDNS_A_INFO_T aInfo;
-};
-
-struct MDNS_PARAM_T {
-	uint8_t ucCmd;
-	uint32_t u4RecordId;
-	uint8_t ucQueryName[MDNS_NAME_MAX_LEN];
-	uint16_t u2QueryNameLen;
-	uint16_t u2QueryType;
-	uint16_t u2QueryClass;
-	uint8_t ucResponseRecord[MDNS_RESPONSE_RECORD_MAX_LEN];
-	uint16_t u2ResponseRecordLen;
-	uint8_t ucServiceName[MDNS_NAME_MAX_LEN];
-	uint16_t u2ServiceNameLen;
-	uint8_t ucServiceType[MDNS_NAME_MAX_LEN];
-	uint16_t u2ServiceTypeLen;
-	uint8_t ucDomainName[MDNS_NAME_MAX_LEN];
-	uint16_t u2DomainNameLen;
-	uint8_t ucHostName[MDNS_NAME_MAX_LEN];
-	uint16_t u2HostNameLen;
-	uint32_t u4Port;
-	uint8_t ucTxtRecord[MDNS_TXT_RR_DATA_MAX_LEN];
-	uint16_t u2TxtRecordLen;
-};
+#define MDNS_WAKEUP_BY_NO_MATCH_RECORD BIT(0)
+#define MDNS_WAKEUP_BY_SUB_REQ	BIT(1)
 
 struct WLAN_MAC_HEADER_QoS_T {
 	uint16_t u2FrameCtrl;
@@ -731,61 +673,60 @@ struct WLAN_MAC_HEADER_QoS_T {
 	uint16_t u2QosCtrl;
 };
 
+struct WLAN_MDNS_HDR_T {
+	uint16_t usMdnsId;
+	uint16_t usMdnsFlags;
+	uint16_t usQuestionCnt;
+	uint16_t usAnswerCnt;
+	uint16_t usAuthCnt;
+	uint16_t usAddtionCnt;
+};
+
 #define UDP_HEADER_LENGTH 8
 #define IPV4_HEADER_LENGTH 20
 
-struct MDNS_ANSWER_RR {
-	uint8_t data[MDNS_RESPONSE_RECORD_MAX_LEN];
-	uint16_t data_length;
-};
-
-struct MDNS_SRV_RR {
-	uint8_t data[MDNS_SRV_RR_LEN];
-	uint16_t data_length;
-};
-
-struct MDNS_TXT_RR {
-	uint8_t data[MDNS_TXT_RR_MAX_LEN];
-	uint16_t data_length;
-};
-
-struct MDNS_A_RR {
-	uint8_t data[MDNS_A_RR_LEN];
-	uint16_t data_length;
-};
-
-struct MDNS_QUESTION {
+struct MDNS_TEMPLATE_T {
 	uint8_t name[MDNS_QUESTION_NAME_MAX_LEN];
 	uint8_t name_length;
-	uint8_t label_count;
 	uint16_t class;
 	uint16_t type;
 };
 
-struct MDNS_Template_Record {
-	uint32_t u4RecordId;
-	struct MDNS_QUESTION mdnsQuestionTemplate;
-	struct MDNS_ANSWER_RR mdnsResponseRecord;
-	uint8_t ucServiceName[MDNS_SERVICE_NAME_MAX_LEN];
-	uint16_t ServiceNameLen;
-	struct MDNS_TXT_RR mdnsTxtRecord;
-	struct MDNS_SRV_RR mdnsSrvRecord;
-	uint8_t ucTargetName[MDNS_SERVICE_NAME_MAX_LEN];
-	uint16_t TargetNameLen;
-	struct MDNS_A_RR mdnsARecord;
-	uint8_t bIsUsed;
+struct MDNS_PARAM_T {
+	struct MDNS_TEMPLATE_T query_ptr;
+	struct MDNS_TEMPLATE_T query_srv;
+	struct MDNS_TEMPLATE_T query_txt;
+	struct MDNS_TEMPLATE_T query_a;
+	uint16_t response_len;
+	uint8_t response[MDNS_RESPONSE_RECORD_MAX_LEN];
+};
+
+struct MDNS_INFO_UPLAYER_T {
+	uint8_t ucCmd;
+	struct MDNS_PARAM_T mdns_param;
+};
+
+struct MDNS_PARAM_ENTRY_T {
+	struct LINK_ENTRY rLinkEntry;
+	struct MDNS_PARAM_T mdns_param;
 };
 
 struct CMD_MDNS_PARAM_T {
 	uint8_t ucCmd;
+	struct MDNS_PARAM_T mdns_param;
 	uint32_t u4RecordId;
+	uint8_t ucWakeFlag;
 	struct WLAN_MAC_HEADER_QoS_T aucMdnsMacHdr;
 	uint8_t aucMdnsIPHdr[IPV4_HEADER_LENGTH];
 	uint8_t aucMdnsUdpHdr[UDP_HEADER_LENGTH];
-	uint8_t mdnsARecord[MDNS_A_RR_LEN];
-	struct MDNS_Template_Record mdnsQueryRespTemplate;
 };
 
+struct MDNS_INFO_T {
+	struct LINK rMdnsRecordList;
+	struct LINK rMdnsRecordFreeList;
+	struct MDNS_PARAM_ENTRY_T rMdnsEntry[MAX_MDNS_CACHE_NUM];
+};
+#endif
 #endif
 
 enum ENUM_NVRAM_MTK_FEATURE {
@@ -1219,7 +1160,8 @@ enum ENUM_MAX_BANDWIDTH_SETTING {
 	MAX_BW_40MHZ,
 	MAX_BW_80MHZ,
 	MAX_BW_160MHZ,
-	MAX_BW_80_80_MHZ
+	MAX_BW_80_80_MHZ,
+	MAX_BW_UNKNOWN
 };
 
 struct TX_PACKET_INFO {
@@ -1357,6 +1299,8 @@ void wlanClearDataQueue(IN struct ADAPTER *prAdapter);
 
 void wlanClearRxToOsQueue(IN struct ADAPTER *prAdapter);
 #endif
+
+void wlanClearPendingCommandQueue(IN struct ADAPTER *prAdapter);
 
 void wlanReleaseCommand(IN struct ADAPTER *prAdapter,
 			IN struct CMD_INFO *prCmdInfo,
@@ -1813,3 +1757,20 @@ uint32_t wlanKeepFullPwr(struct ADAPTER *prAdapter, uint8_t fgEnable);
 void wlanRxMcsInfoMonitor(struct ADAPTER *prAdapter,
 					    unsigned long ulParamPtr);
 #endif
+
+#if CFG_SUPPORT_TPENHANCE_MODE
+inline uint64_t wlanTpeTimeUs(void);
+void wlanTpeUpdate(struct GLUE_INFO *prGlueInfo, struct QUE *prSrcQue,
+		uint8_t ucPktJump);
+void wlanTpeFlush(struct GLUE_INFO *prGlueInfo);
+#if KERNEL_VERSION(4, 14, 0) <= LINUX_VERSION_CODE
+void wlanTpeTimeoutHandler(struct timer_list *timer);
+#else
+void wlanTpeTimeoutHandler(unsigned long data);
+#endif
+void wlanTpeInit(struct GLUE_INFO *prGlueInfo);
+void wlanTpeUninit(struct GLUE_INFO *prGlueInfo);
+int wlanTpeProcess(struct GLUE_INFO *prGlueInfo,
+			struct sk_buff *prSkb,
+			struct net_device *prDev);
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */

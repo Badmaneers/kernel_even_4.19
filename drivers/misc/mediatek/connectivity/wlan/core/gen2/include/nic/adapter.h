@@ -413,6 +413,9 @@ struct _BSS_INFO_T {
 	/* AP PMF */
 	struct AP_PMF_CFG rApPmfCfg;
 #endif
+	LINK_T rPmkidCache;
+	UINT_8 fgEnableH2E;
+
 };
 
 struct ESS_CHNL_INFO {
@@ -611,6 +614,9 @@ typedef struct _WIFI_VAR_T {
 	UINT_8 aucCwMin[WMM_AC_INDEX_NUM];
 	UINT_16 au2CwMax[WMM_AC_INDEX_NUM];
 	UINT_16 au2TxOp[WMM_AC_INDEX_NUM];
+
+	BOOLEAN fgReuseRSNIE;
+	UINT_8 fgSapCheckPmkidInDriver;
 } WIFI_VAR_T, *P_WIFI_VAR_T;	/* end of _WIFI_VAR_T */
 
 /* cnm_timer module */

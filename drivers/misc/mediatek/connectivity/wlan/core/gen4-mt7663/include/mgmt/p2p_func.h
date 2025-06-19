@@ -424,4 +424,20 @@ uint32_t p2pFunGetPreferredFreqList(IN struct ADAPTER *prAdapter,
 
 uint8_t p2pFuncIsBufferableMMPDU(IN struct MSDU_INFO *prMgmtTxMsdu);
 
+uint8_t p2pFunGetAcsBestCh(IN struct ADAPTER *prAdapter,
+		IN enum ENUM_BAND eBand,
+		IN enum ENUM_MAX_BANDWIDTH_SETTING eChnlBw,
+		IN uint32_t u4LteSafeChnMask_2G,
+		IN uint32_t u4LteSafeChnMask_5G_1,
+		IN uint32_t u4LteSafeChnMask_5G_2);
+
+void p2pFunProcessAcsReport(IN struct ADAPTER *prAdapter,
+		IN uint8_t ucRoleIndex,
+		IN struct PARAM_GET_CHN_INFO *prLteSafeChnInfo,
+		IN struct P2P_ACS_REQ_INFO *prAcsReqInfo);
+
+void p2pFunIndicateAcsResult(IN struct GLUE_INFO *prGlueInfo,
+		IN struct P2P_ACS_REQ_INFO *prAcsReqInfo);
+
+void p2pFunCalAcsChnScores(IN struct ADAPTER *prAdapter);
 #endif

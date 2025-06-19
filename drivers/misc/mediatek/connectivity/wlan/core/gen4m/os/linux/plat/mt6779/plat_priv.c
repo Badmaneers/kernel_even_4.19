@@ -14,7 +14,7 @@
 #include "precomp.h"
 #include "wmt_exp.h"
 
-#ifdef CONFIG_MTK_EMI
+#ifdef CONFIG_WLAN_MTK_EMI
 #include <memory/mediatek/emi.h>
 #define WIFI_EMI_MEM_OFFSET    0x1D0000
 #define WIFI_EMI_MEM_SIZE      0x140000
@@ -56,7 +56,7 @@ int32_t kalBoostCpu(IN struct ADAPTER *prAdapter,
 	return 0;
 }
 
-#ifdef CONFIG_MTK_EMI
+#ifdef CONFIG_WLAN_MTK_EMI
 void kalSetEmiMpuProtection(phys_addr_t emiPhyBase, bool enable)
 {
 }
@@ -91,7 +91,7 @@ void kalSetDrvEmiMpuProtection(phys_addr_t emiPhyBase, uint32_t offset,
 }
 #endif
 
-int32_t kalGetFwFlavor(uint8_t *flavor)
+int32_t kalGetFwFlavorByPlat(uint8_t *flavor)
 {
 	int32_t ret = 1;
 	const uint32_t adie_chip_id = mtk_wcn_wmt_ic_info_get(WMTCHIN_ADIE);

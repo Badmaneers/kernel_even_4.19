@@ -97,6 +97,12 @@ extern int g_u4HaltFlag;
 extern struct delayed_work sched_workq;
 extern u_int8_t g_fgIsOid;
 
+#if CFG_SUPPORT_CFG80211_AUTH
+#if CFG_SUPPORT_CFG80211_QUEUE
+extern struct delayed_work cfg80211_workq;
+#endif
+#endif
+
 /*******************************************************************************
 *                              C O N S T A N T S
 ********************************************************************************
@@ -186,6 +192,11 @@ typedef enum _ENUM_SPIN_LOCK_CATEGORY_E {
 	SPIN_LOCK_TC_RESOURCE,
 	SPIN_LOCK_RX_TO_OS_QUE,
 #endif
+#if CFG_SUPPORT_CFG80211_AUTH
+#if CFG_SUPPORT_CFG80211_QUEUE
+		SPIN_LOCK_CFG80211_QUE,
+#endif
+#endif
 
 	/* FIX ME */
 	SPIN_LOCK_RX_QUE,
@@ -265,10 +276,14 @@ typedef enum _ENUM_KAL_MEM_ALLOCATION_TYPE_E {
 	MEM_TYPE_NUM
 } ENUM_KAL_MEM_ALLOCATION_TYPE;
 
-#ifdef CONFIG_ANDROID		/* Defined in Android kernel source */
-typedef struct wake_lock KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
+#if CFG_ENABLE_WAKE_LOCK
+#if (KERNEL_VERSION(4, 9, 0) <= LINUX_VERSION_CODE)
+#define KAL_WAKE_LOCK_T struct wakeup_source
 #else
-typedef UINT_32 KAL_WAKE_LOCK_T, *P_KAL_WAKE_LOCK_T;
+#define KAL_WAKE_LOCK_T struct wake_lock
+#endif
+#else
+#define KAL_WAKE_LOCK_T uint32_t
 #endif
 
 #if CFG_SUPPORT_AGPS_ASSIST
@@ -383,6 +398,25 @@ typedef struct _MONITOR_RADIOTAP_T {
 	/* extension space */
 	UINT_8 aucReserve[12];
 } __packed MONITOR_RADIOTAP_T, *P_MONITOR_RADIOTAP_T;
+#endif
+
+#if CFG_SUPPORT_CFG80211_AUTH
+#if CFG_SUPPORT_CFG80211_QUEUE
+struct PARAM_CFG80211_REQ {
+	QUE_ENTRY_T rQueEntry;
+	struct net_device *prDevHandler;
+	void *prFrame; /* the deauth and disassoc has the same struct */
+	struct cfg80211_bss *bss;
+	size_t frameLen;
+	UINT_8 ucFlagTx;
+	UINT_8 ucFrameType; /* auth deauth disassoc assoc and so on */
+};
+
+enum ENUM_CFG80211_TX_FLAG {
+	CFG80211_RX,
+	CFG80211_TX
+};
+#endif
 #endif
 
 /*******************************************************************************
@@ -537,26 +571,57 @@ static inline void kalCfg80211ScanDone(struct cfg80211_scan_request *request,
 /*----------------------------------------------------------------------------*/
 /* Macros of wake_lock operations for using in Driver Layer                   */
 /*----------------------------------------------------------------------------*/
-#if defined(CONFIG_ANDROID) && (CFG_ENABLE_WAKE_LOCK)
-/* CONFIG_ANDROID is defined in Android kernel source */
+#if CFG_ENABLE_WAKE_LOCK
+		/* CONFIG_ANDROID is defined in Android kernel source */
+#if (KERNEL_VERSION(4, 9, 0) <= LINUX_VERSION_CODE)
+#define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName) \
+	wakeup_source_init(_prWakeLock, _pcName)
+
+#define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock) \
+	wakeup_source_trash(_prWakeLock)
+
+#define KAL_WAKE_LOCK(_prAdapter, _prWakeLock) ({ \
+	if (halIsHifStateReady(_prAdapter) == TRUE) { \
+		__pm_stay_awake(_prWakeLock); \
+	} \
+})
+
+#define KAL_WAKE_LOCK_TIMEOUT(_prAdapter, _prWakeLock, _u4Timeout) ({ \
+	if (halIsHifStateReady(_prAdapter) == TRUE) { \
+		__pm_wakeup_event(_prWakeLock, _u4Timeout); \
+	} \
+})
+#define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock) \
+	__pm_relax(_prWakeLock)
+
+#define KAL_WAKE_LOCK_ACTIVE(_prAdapter, _prWakeLock) \
+	((_prWakeLock)->active)
+
+#else
 #define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName) \
 	wake_lock_init(_prWakeLock, WAKE_LOCK_SUSPEND, _pcName)
 
 #define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock) \
 	wake_lock_destroy(_prWakeLock)
 
-#define KAL_WAKE_LOCK(_prAdapter, _prWakeLock) \
-	wake_lock(_prWakeLock)
+#define KAL_WAKE_LOCK(_prAdapter, _prWakeLock) ({ \
+	if (halIsHifStateReady(_prAdapter) == TRUE) { \
+		wake_lock(_prWakeLock); \
+	} \
+})
 
-#define KAL_WAKE_LOCK_TIMEOUT(_prAdapter, _prWakeLock, _u4Timeout) \
-	wake_lock_timeout(_prWakeLock, _u4Timeout)
+#define KAL_WAKE_LOCK_TIMEOUT(_prAdapter, _prWakeLock, _u4Timeout) ({ \
+	if (halIsHifStateReady(_prAdapter) == TRUE) { \
+		wake_lock_timeout(_prWakeLock, _u4Timeout); \
+	} \
+})
 
 #define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock) \
 	wake_unlock(_prWakeLock)
 
 #define KAL_WAKE_LOCK_ACTIVE(_prAdapter, _prWakeLock) \
 	wake_lock_active(_prWakeLock)
-
+#endif
 #else
 #define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName)
 #define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock)
@@ -779,7 +844,7 @@ static inline void kalCfg80211ScanDone(struct cfg80211_scan_request *request,
 #define kalGetTimeTick()                            jiffies_to_msecs(jiffies)
 
 #define WLAN_TAG                                    "[wlan]"
-#define kalPrint(_Fmt...)                           printk(WLAN_TAG _Fmt)
+#define kalPrint(_Fmt...)                           pr_info(WLAN_TAG _Fmt)
 #define limitedKalPrint(_Fmt...)\
 	pr_info_ratelimited(WLAN_TAG _Fmt)
 
@@ -962,6 +1027,9 @@ VOID kalConstructDefaultFirmwarePrio(P_GLUE_INFO_T prGlueInfo, PPUINT_8 apucName
 PVOID kalFirmwareImageMapping(IN P_GLUE_INFO_T prGlueInfo,
 			      OUT PPVOID ppvMapFileBuf, OUT PUINT_32 pu4FileLength, IN ENUM_IMG_DL_IDX_T eDlIdx);
 VOID kalFirmwareImageUnmapping(IN P_GLUE_INFO_T prGlueInfo, IN PVOID prFwHandle, IN PVOID pvMapFileBuf);
+#endif
+#if CFG_CHIP_RESET_SUPPORT
+void kalRemoveProbe(IN P_GLUE_INFO_T prGlueInfo);
 #endif
 
 /*----------------------------------------------------------------------------*/
@@ -1239,6 +1307,35 @@ WLAN_STATUS kalOpenCorDumpFile(BOOLEAN fgIsN9);
 WLAN_STATUS kalWriteCorDumpFile(PUINT_8 pucBuffer, UINT_16 u2Size, BOOLEAN fgIsN9);
 WLAN_STATUS kalCloseCorDumpFile(BOOLEAN fgIsN9);
 #endif
+
+#if CFG_SUPPORT_CFG80211_AUTH
+#if CFG_SUPPORT_CFG80211_QUEUE
+void kalAcquireWDevMutex(IN struct net_device *pDev);
+
+void kalReleaseWDevMutex(IN struct net_device *pDev);
+
+void wlanSchedCfg80211WorkQueue(struct work_struct *work);
+
+void cfg80211AddToPktQueue(struct net_device *prDevHandler, void *buf,
+			UINT_16 u2FrameLength, struct cfg80211_bss *bss,
+			UINT_8 ucflagTx, UINT_8 ucFrameType);
+#endif
+
+void kalIndicateRxAuthToUpperLayer(struct net_device *prDevHandler,
+			PUINT_8 prAuthFrame, UINT_16 u2FrameLen);
+void kalIndicateRxAssocToUpperLayer(struct net_device *prDevHandler,
+			PUINT_8 prAssocRspFrame, struct cfg80211_bss *bss,
+			UINT_16 u2FrameLen);
+void kalIndicateRxDeauthToUpperLayer(struct net_device *prDevHandler,
+			PUINT_8 prDeauthFrame,  UINT_16 u2FrameLen);
+void kalIndicateRxDisassocToUpperLayer(struct net_device *prDevHandler,
+			PUINT_8 prDisassocFrame,  UINT_16 u2FrameLen);
+void kalIndicateTxDeauthToUpperLayer(struct net_device *prDevHandler,
+			PUINT_8 prDeauthFrame,  UINT_16 u2FrameLen);
+void kalIndicateTxDisassocToUpperLayer(struct net_device *prDevHandler,
+			PUINT_8 prDisassocFrame,  UINT_16 u2FrameLen);
+#endif
+
 /*******************************************************************************
 *                              F U N C T I O N S
 ********************************************************************************
@@ -1247,8 +1344,21 @@ WLAN_STATUS kalCloseCorDumpFile(BOOLEAN fgIsN9);
 #if CFG_WOW_SUPPORT
 VOID kalWowInit(IN P_GLUE_INFO_T prGlueInfo);
 VOID kalWowProcess(IN P_GLUE_INFO_T prGlueInfo, UINT_8 enable);
+#if CFG_SUPPORT_MDNS_OFFLOAD
 void kalMdnsProcess(IN P_GLUE_INFO_T prGlueInfo,
-		IN struct MDNS_PARAM_T *prMdnsParam);
+		IN struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+void kalMdnsOffloadInit(IN P_ADAPTER_T prAdapter);
+struct MDNS_PARAM_ENTRY_T * mdnsAllocateParamEntry(IN P_ADAPTER_T prAdapter);
+void kalSendClearRecordToFw(P_GLUE_INFO_T prGlueInfo);
+void kalSendMdnsRecordToFw(P_GLUE_INFO_T prGlueInfo);
+void kalSendMdnsEnableToFw(P_GLUE_INFO_T prGlueInfo);
+void kalAddMdnsRecord(P_GLUE_INFO_T prGlueInfo,
+		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+void kalShowMdnsRecord(P_GLUE_INFO_T prGlueInfo);
+#if CFG_SUPPORT_MDNS_OFFLOAD_GVA
+void kalProcessMdnsRespPkt(P_GLUE_INFO_T prGlueInfo, PUINT_8 pucMdnsHdr);
+#endif
+#endif
 #endif
 
 int main_thread(void *data);
@@ -1285,5 +1395,6 @@ static inline UINT_64 kalDivU64(UINT_64 dividend, UINT_32 divisor)
 
 VOID kalInitDevWakeup(P_ADAPTER_T prAdapter, struct device *prDev);
 
+unsigned long kal_kallsyms_lookup_name(const char *name);
 
 #endif /* _GL_KAL_H */

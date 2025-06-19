@@ -2300,13 +2300,7 @@ BOOLEAN nicTxFillMsduInfo(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo,
 			prMsduInfo->ucTxSeqNum = GLUE_GET_PKT_SEQ_NO(prPacket);
 		}
 		if (GLUE_TEST_PKT_FLAG(prPacket, ENUM_PKT_DHCP) || GLUE_TEST_PKT_FLAG(prPacket, ENUM_PKT_ARP)) {
-                        #ifdef OPLUS_BUG_STABILITY
-                        //ShiXing.Ke@PSW.CN.WiFi.Connect,1615184,2018/11/05
-                        //Add for change qos control field to 0
-                        /*
-                        prMsduInfo->ucUserPriority = 6; // use VO priority
-                        */
-                        #endif /* OPLUS_BUG_STABILITY */
+			prMsduInfo->ucUserPriority = 6; /* use VO priority */
 			prMsduInfo->ucDhcpArpFlag = 1;
 		}
 	}

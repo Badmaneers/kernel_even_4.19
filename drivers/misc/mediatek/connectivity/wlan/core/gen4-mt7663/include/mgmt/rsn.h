@@ -351,6 +351,10 @@ uint32_t rsnCalOweIELen(IN struct ADAPTER *prAdapter,
 	IN uint8_t ucBssIndex, struct STA_RECORD *prStaRec);
 #endif
 
+void rsnGenerateRSNXE(IN struct ADAPTER *prAdapter,
+	  IN OUT struct MSDU_INFO *prMsduInfo);
+uint32_t rsnCalRSNXELen(IN struct ADAPTER *prAdapter,
+	IN uint8_t ucBssIndex, struct STA_RECORD *prStaRec);
 
 /*******************************************************************************
  *                              F U N C T I O N S

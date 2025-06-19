@@ -341,6 +341,12 @@ int mtk_cfg80211_mgmt_tx(struct wiphy *wiphy,
 void mtk_cfg80211_mgmt_frame_register(IN struct wiphy *wiphy,
 		IN struct wireless_dev *wdev, IN u16 frame_type, IN bool reg);
 
+#if KERNEL_VERSION(5, 8, 0) <= CFG80211_VERSION_CODE
+void mtk_cfg_mgmt_frame_update(struct wiphy *wiphy,
+		struct wireless_dev *wdev,
+		struct mgmt_frame_regs *upd);
+#endif
+
 int mtk_cfg80211_mgmt_tx_cancel_wait(struct wiphy *wiphy,
 				     struct wireless_dev *wdev, u64 cookie);
 
@@ -609,8 +615,13 @@ int mtk_cfg_sched_scan_start(IN struct wiphy *wiphy,
 			     IN struct net_device *ndev,
 			     IN struct cfg80211_sched_scan_request *request);
 
+#if KERNEL_VERSION(4, 14, 0) <= CFG80211_VERSION_CODE
 int mtk_cfg_sched_scan_stop(IN struct wiphy *wiphy,
-			    IN struct net_device *ndev);
+		IN struct net_device *ndev,
+		IN u64 reqid);
+#else
+int mtk_cfg_sched_scan_stop(IN struct wiphy *wiphy, IN struct net_device *ndev);
+#endif
 #endif /* CFG_SUPPORT_SCHED_SCAN */
 
 #if CFG_SUPPORT_CFG80211_AUTH

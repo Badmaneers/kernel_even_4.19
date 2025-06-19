@@ -1,20 +1,14 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (C) 2019 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
+ * Copyright (c) 2019 - 2021 MediaTek Inc.
  */
+
 #include "gps_dl_config.h"
 #include "gps_dl_context.h"
 
 #include "gps_dl_hal.h"
 #include "gps_dl_hw_api.h"
+#include "gps_dl_hw_semaphore.h"
 #include "gps_dl_hal.h"
 #if GPS_DL_MOCK_HAL
 #include "gps_mock_hal.h"
@@ -46,6 +40,14 @@ bool g_gps_irqs_dis[GPS_DATA_LINK_NUM][GPS_DL_IRQ_TYPE_NUM];
 bool g_gps_need_clk_ext[GPS_DATA_LINK_NUM];
 int g_gps_conn_clock_flag = GPSDL_CLOCK_FLAG_COTMS;
 unsigned int g_conn_user;
+bool g_gps_need_revert_for_mvcd[GPS_DATA_LINK_NUM];
+
+enum gps_blanking_setting_enum {
+	USE_PTA_DEFAULT,
+	USE_PTA_IDC_MODE,
+	USE_PTA_DIRECT_PATH,
+	NO_PTA
+};
 
 bool gps_dl_hal_get_dma_irq_en_flag(void)
 {
@@ -80,7 +82,7 @@ void gps_dl_hal_set_mcub_irq_dis_flag(enum gps_dl_link_id_enum link_id, bool dis
 bool gps_dl_hal_get_irq_dis_flag(enum gps_dl_link_id_enum link_id,
 	enum gps_dl_each_link_irq_type type)
 {
-	bool disable;
+	bool disable = false;
 
 	ASSERT_LINK_ID(link_id, false);
 	ASSERT_IRQ_TYPE(type, false);
@@ -102,7 +104,7 @@ void gps_dl_hal_set_irq_dis_flag(enum gps_dl_link_id_enum link_id,
 
 bool gps_dl_hal_get_need_clk_ext_flag(enum gps_dl_link_id_enum link_id)
 {
-	bool need;
+	bool need = false;
 
 	ASSERT_LINK_ID(link_id, false);
 	gps_each_link_spin_lock_take(link_id, GPS_DL_SPINLOCK_FOR_LINK_STATE);
@@ -145,6 +147,7 @@ int gps_dl_hal_link_power_ctrl(enum gps_dl_link_id_enum link_id,
 	if (!wakeup_okay && conninfra_okay) {
 #if (GPS_DL_HAS_CONNINFRA_DRV)
 		int trigger_ret;
+
 		trigger_ret = conninfra_trigger_whole_chip_rst(CONNDRV_TYPE_GPS, "GPS conninfra wake fail");
 		GDL_LOGXE(link_id, "conninfra wake fail, trigger reset ret = %d", trigger_ret);
 #else
@@ -216,29 +219,46 @@ int gps_dl_hal_link_power_ctrl_inner(enum gps_dl_link_id_enum link_id,
 	} else if (3 == op || 5 == op) {
 		gps_dl_lna_pin_ctrl(link_id, true, false);
 		if (GPS_DATA_LINK_ID0 == link_id) {
-			if (3 == op)
+			if (3 == op) {
 				gps_dl_hw_gps_dsp_ctrl(GPS_L1_DSP_EXIT_DSLEEP);
-			else if (5 == op)
+				g_gps_dsp_off_ret_array[link_id] = 0;
+			} else if (5 == op) {
 				gps_dl_hw_gps_dsp_ctrl(GPS_L1_DSP_EXIT_DSTOP);
+				g_gps_dsp_off_ret_array[link_id] = 0;
+			}
 		} else if (GPS_DATA_LINK_ID1 == link_id) {
-			if (3 == op)
+			if (3 == op) {
 				gps_dl_hw_gps_dsp_ctrl(GPS_L5_DSP_EXIT_DSLEEP);
-			else if (5 == op)
+				g_gps_dsp_off_ret_array[link_id] = 0;
+			} else if (5 == op) {
 				gps_dl_hw_gps_dsp_ctrl(GPS_L5_DSP_EXIT_DSTOP);
+				g_gps_dsp_off_ret_array[link_id] = 0;
+			}
 		}
 		return 0;
 	} else if (2 == op || 4 == op) {
 		if (GPS_DATA_LINK_ID0 == link_id) {
 			if (2 == op)
-				gps_dl_hw_gps_dsp_ctrl(GPS_L1_DSP_ENTER_DSLEEP);
+				g_gps_dsp_off_ret_array[link_id] = gps_dl_hw_gps_dsp_ctrl(GPS_L1_DSP_ENTER_DSLEEP);
 			else if (4 == op)
-				gps_dl_hw_gps_dsp_ctrl(GPS_L1_DSP_ENTER_DSTOP);
+				g_gps_dsp_off_ret_array[link_id] = gps_dl_hw_gps_dsp_ctrl(GPS_L1_DSP_ENTER_DSTOP);
+
 		} else if (GPS_DATA_LINK_ID1 == link_id) {
 			if (2 == op)
-				gps_dl_hw_gps_dsp_ctrl(GPS_L5_DSP_ENTER_DSLEEP);
+				g_gps_dsp_off_ret_array[link_id] = gps_dl_hw_gps_dsp_ctrl(GPS_L5_DSP_ENTER_DSLEEP);
 			else if (4 == op)
-				gps_dl_hw_gps_dsp_ctrl(GPS_L5_DSP_ENTER_DSTOP);
+				g_gps_dsp_off_ret_array[link_id] = gps_dl_hw_gps_dsp_ctrl(GPS_L5_DSP_ENTER_DSTOP);
 		}
+
+		/*force adie off when enter deep stop mode timeout*/
+		if ((g_gps_dsp_off_ret_array[GPS_DATA_LINK_ID0] != 0) ||
+				(g_gps_dsp_off_ret_array[GPS_DATA_LINK_ID1] != 0)) {
+			GDL_LOGXE(link_id, "l1 ret = %d, l5 ret = %d, enter deep stop mode with force adie off",
+				g_gps_dsp_off_ret_array[GPS_DATA_LINK_ID0],
+				g_gps_dsp_off_ret_array[GPS_DATA_LINK_ID1]);
+			gps_dl_hw_gps_adie_force_off();
+		}
+
 		gps_dl_lna_pin_ctrl(link_id, false, false);
 		return 0;
 	} else if (0 == op) {
@@ -304,6 +324,11 @@ void gps_dl_hal_link_clear_hw_pwr_stat(enum gps_dl_link_id_enum link_id)
 		gps_dl_hw_gps_dsp_ctrl(GPS_L5_DSP_CLEAR_PWR_STAT);
 }
 
+void gps_dl_hal_link_may_disable_bpll(void)
+{
+	gps_dl_hw_dep_may_disable_bpll();
+}
+
 int gps_dl_hal_conn_power_ctrl(enum gps_dl_link_id_enum link_id, int op)
 {
 	bool dma_en_flag = gps_dl_hal_get_dma_irq_en_flag();
@@ -321,7 +346,6 @@ int gps_dl_hal_conn_power_ctrl(enum gps_dl_link_id_enum link_id, int op)
 				return -1;
 
 			gps_dl_hal_load_clock_flag();
-			gps_dl_emi_remap_calc_and_set();
 #if GPS_DL_HAS_PLAT_DRV
 			gps_dl_wake_lock_hold(true);
 #if GPS_DL_USE_TIA
@@ -361,7 +385,8 @@ void gps_dl_hal_link_confirm_dma_stop(enum gps_dl_link_id_enum link_id)
 {
 	struct gps_each_link *p_link = gps_dl_link_get(link_id);
 	unsigned int conn_user;
-	bool tx_working, rx_working;
+	bool tx_working = false;
+	bool rx_working = false;
 	enum GDL_RET_STATUS stop_tx_status, stop_rx_status;
 	bool old_dma_en, do_dma_en_ctrl;
 
@@ -468,10 +493,23 @@ void gps_dl_hal_conn_infra_driver_off(void)
 #endif
 }
 
+void gps_dl_hal_conn_infra_driver_debug_dump(void)
+{
+#if 0 /* GPS_DL_HAS_CONNINFRA_DRV - only need/support for mt6880 */
+	GDL_LOGW("conninfra_debug_dump - start");
+	conninfra_debug_dump();
+	GDL_LOGW("conninfra_debug_dump - end");
+#else
+	GDL_LOGW("conninfra_debug_dump - not support");
+#endif
+}
+
 #if GPS_DL_HAS_PTA
+#if GPS_DL_BLANKING_KEEP_IDC_MODE
 bool gps_dl_hal_md_blanking_init_pta_idc_mode(void)
 {
-	bool okay, done;
+	bool okay = false;
+	bool done = false;
 
 	/* do pta uart init firstly */
 	done = gps_dl_hw_is_pta_uart_init_done();
@@ -491,12 +529,11 @@ bool gps_dl_hal_md_blanking_init_pta_idc_mode(void)
 	else
 		GDL_LOGW("pta already init done");
 
-	gps_dl_hw_claim_pta_used_by_gps();
-
 	/* use_direct_path = false */
 	gps_dl_hw_set_pta_blanking_parameter(false);
 	return true;
 }
+#endif
 
 void gps_dl_hal_md_blanking_init_pta_direct_path(void)
 {
@@ -506,12 +543,20 @@ void gps_dl_hal_md_blanking_init_pta_direct_path(void)
 
 bool gps_dl_hal_md_blanking_init_pta(void)
 {
-	bool okay, done;
-	bool is_mt6885;
-	bool clk_is_ready;
+	bool okay = false;
+	bool is_mt6885 = false;
+	bool clk_is_ready = false;
+	enum gps_blanking_setting_enum setting_val = USE_PTA_DEFAULT;
+
+	bool is_mt6893 = false;
 
 	is_mt6885 = gps_dl_hal_conn_infra_ver_is_mt6885();
-	GDL_LOGW("is_mt6885 = %d", is_mt6885);
+	is_mt6893 = gps_dl_hal_conn_infra_ver_is_mt6893();
+
+	if (is_mt6885 || is_mt6893)
+		setting_val = USE_PTA_DIRECT_PATH;
+
+	GDL_LOGW("setting_val = %d", setting_val);
 
 	if (g_gps_pta_init_done) {
 		GDL_LOGW("already init done, do nothing return");
@@ -539,18 +584,22 @@ bool gps_dl_hal_md_blanking_init_pta(void)
 		}
 	}
 
-	if (is_mt6885) {
+#if GPS_DL_BLANKING_KEEP_IDC_MODE
+	if (setting_val == USE_PTA_IDC_MODE) {
 		/* idc mode */
 		okay = gps_dl_hal_md_blanking_init_pta_idc_mode();
 		if (!okay) {
 			gps_dl_hw_give_conn_coex_hw_sema();
 			return false;
 		}
-	} else {
+	} else
+#endif
+	if (setting_val == USE_PTA_DIRECT_PATH) {
 		/* direct path */
 		gps_dl_hal_md_blanking_init_pta_direct_path();
 	}
 
+	gps_dl_hw_claim_pta_used_by_gps();
 	gps_dl_hw_give_conn_coex_hw_sema();
 
 	/* okay, update flags */
@@ -564,7 +613,7 @@ bool gps_dl_hal_md_blanking_init_pta(void)
 
 void gps_dl_hal_md_blanking_deinit_pta(void)
 {
-	bool okay;
+	bool okay = false;
 
 	/* clear the flags anyway */
 #if GPS_DL_HAS_PLAT_DRV
@@ -648,5 +697,20 @@ void gps_dl_hal_load_clock_flag(void)
 	GDL_LOGW("clk: no conninfra drv, default flag = 0x%x", gps_clock_flag);
 #endif
 	g_gps_conn_clock_flag = gps_clock_flag;
+}
+
+bool gps_dl_hal_get_deep_stop_mode_revert_for_mvcd(enum gps_dl_link_id_enum link_id)
+{
+	bool need = false;
+
+	ASSERT_LINK_ID(link_id, false);
+	need = g_gps_need_revert_for_mvcd[link_id];
+	return need;
+}
+
+void gps_dl_hal_set_deep_stop_mode_revert_for_mvcd(enum gps_dl_link_id_enum link_id, bool revert_for_mvcd)
+{
+	ASSERT_LINK_ID(link_id, GDL_VOIDF());
+	g_gps_need_revert_for_mvcd[link_id] = revert_for_mvcd;
 }
 

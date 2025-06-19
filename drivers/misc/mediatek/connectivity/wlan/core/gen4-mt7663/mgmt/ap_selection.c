@@ -411,15 +411,19 @@ static uint16_t scanCalculateScoreByBand(struct ADAPTER *prAdapter,
 {
 	uint16_t u2Score = 0;
 	struct AIS_FSM_INFO *prAisFsmInfo;
+#if CFG_SUPPORT_ROAMING
 	struct ROAMING_INFO *prRoamingFsmInfo;
-
+#endif
 	prAisFsmInfo = &(prAdapter->rWifiVar.rAisFsmInfo);
+#if CFG_SUPPORT_ROAMING
 	prRoamingFsmInfo = (struct ROAMING_INFO *)
 		&(prAdapter->rWifiVar.rRoamingInfo);
-
+#endif
 	if (prBssDesc->eBand == BAND_5G && prAdapter->fgEnable5GBand
 		&& cRssi > -60
+#if CFG_SUPPORT_ROAMING
 		&& prRoamingFsmInfo->eCurrentState == ROAMING_STATE_IDLE
+#endif
 		&& prAisFsmInfo->u4PostponeIndStartTime == 0)
 		u2Score = (WEIGHT_IDX_5G_BAND * BSS_FULL_SCORE);
 

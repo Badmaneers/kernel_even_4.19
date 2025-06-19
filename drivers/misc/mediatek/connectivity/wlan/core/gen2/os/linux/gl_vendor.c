@@ -114,7 +114,7 @@
 *                            P U B L I C   D A T A
 ********************************************************************************
 */
-
+#if 0
 static struct nla_policy nla_parse_wifi_policy[WIFI_ATTRIBUTE_ROAMING_STATE + 1] = {
 	[WIFI_ATTRIBUTE_BAND] = {.type = NLA_U32},
 	[WIFI_ATTRIBUTE_NUM_CHANNELS] = {.type = NLA_U32},
@@ -136,6 +136,14 @@ static struct nla_policy nla_parse_wifi_policy[WIFI_ATTRIBUTE_ROAMING_STATE + 1]
 	[WIFI_ATTRIBUTE_ROAMING_WHITELIST_NUM] = {.type = NLA_U32},
 	[WIFI_ATTRIBUTE_ROAMING_WHITELIST_SSID] = {.type = NLA_UNSPEC},
 	[WIFI_ATTRIBUTE_ROAMING_STATE] = {.type = NLA_U32},
+};
+#endif
+
+const struct nla_policy nla_parse_wifi_rssi_monitor[
+		WIFI_ATTRIBUTE_RSSI_MONITOR_ATTRIBUTE_MAX + 1] = {
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_MAX_RSSI] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_MIN_RSSI] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_START]    = {.type = NLA_U32},
 };
 
 #if CFG_SUPPORT_GSCN
@@ -1318,6 +1326,7 @@ int mtk_cfg80211_vendor_llstats_get_info(struct wiphy *wiphy, struct wireless_de
 	/* return i4Status; */
 
 nla_put_failure:
+	kalMemFree(pRadioStat, VIR_MEM_TYPE, u4BufLen);
 	kfree_skb(skb);
 	return i4Status;
 }
@@ -1344,18 +1353,18 @@ int mtk_cfg80211_vendor_set_rssi_monitoring(struct wiphy *wiphy, struct wireless
 	kalMemZero(attr, sizeof(struct nlattr *) * (WIFI_ATTRIBUTE_RSSI_MONITOR_START + 1));
 
 	if (NLA_PARSE_NESTED(attr, WIFI_ATTRIBUTE_RSSI_MONITOR_START,
-		(struct nlattr *)(data - NLA_HDRLEN), nla_parse_wifi_policy) < 0) {
+		(struct nlattr *)(data - NLA_HDRLEN), nla_parse_wifi_rssi_monitor) < 0) {
 		DBGLOG(REQ, ERROR, "%s nla_parse_nested failed\n", __func__);
 		goto nla_put_failure;
 	}
 
-	for (i = WIFI_ATTRIBUTE_MAX_RSSI; i <= WIFI_ATTRIBUTE_RSSI_MONITOR_START; i++) {
+	for (i = WIFI_ATTRIBUTE_RSSI_MONITOR_MAX_RSSI; i <= WIFI_ATTRIBUTE_RSSI_MONITOR_START; i++) {
 		if (attr[i]) {
 			switch (i) {
-			case WIFI_ATTRIBUTE_MAX_RSSI:
+			case WIFI_ATTRIBUTE_RSSI_MONITOR_MAX_RSSI:
 				rRSSIMonitor.max_rssi_value = nla_get_u32(attr[i]);
 				break;
-			case WIFI_ATTRIBUTE_MIN_RSSI:
+			case WIFI_ATTRIBUTE_RSSI_MONITOR_MIN_RSSI:
 				rRSSIMonitor.min_rssi_value = nla_get_u32(attr[i]);
 				break;
 			case WIFI_ATTRIBUTE_RSSI_MONITOR_START:

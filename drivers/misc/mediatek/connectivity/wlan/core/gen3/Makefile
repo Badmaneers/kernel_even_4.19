@@ -1,5 +1,13 @@
 MTK_PLATFORM := $(subst ",,$(CONFIG_MTK_PLATFORM))
 ###############################################################################
+# Necessary Check
+
+ifeq ($(AUTOCONF_H),)
+    $(error AUTOCONF_H is not defined)
+endif
+
+ccflags-y += -imacros $(AUTOCONF_H)
+
 # Force build fail on modpost warning
 KBUILD_MODPOST_FAIL_ON_WARNINGS := y
 ###############################################################################
@@ -88,13 +96,13 @@ endif
 ccflags-y += -I$(src)/include -I$(src)/include/nic -I$(src)/include/mgmt
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/base/power/include
 
-WMT_ANDROID_MK := $(TOP)/vendor/mediatek/kernel_modules/connectivity/common/Android.mk
+WMT_ANDROID_MK := $(srctree)/drivers/misc/mediatek/connectivity/common/Android.mk
 ifeq (,$(wildcard $(WMT_ANDROID_MK)))
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/include
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/linux/include
 else
-ccflags-y += -I$(TOP)/vendor/mediatek/kernel_modules/connectivity/common/common_main/include
-ccflags-y += -I$(TOP)/vendor/mediatek/kernel_modules/connectivity/common/common_main/linux/include
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/include
+ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/common_main/linux/include
 endif
 ccflags-y += -I$(srctree)/drivers/misc/mediatek/connectivity/common/
 ccflags-y += -D MTK_WCN_WMT_STP_EXP_SYMBOL_ABSTRACT
@@ -110,10 +118,10 @@ OS_DIR      := os/linux/
 NIC_DIR     := nic/
 MGMT_DIR    := mgmt/
 FWCFG_DIR   := $(src)/$(MTK_PROJECT)/
+PLAT_DIR    := os/linux/plat/$(MTK_PLATFORM)/
 
 ifeq ($(WLAN_CHIP_ID), MT6631)
 HIF_DIR     := os/linux/hif/ahb_sdioLike/
-PLAT_DIR    := os/linux/plat/$(MTK_PLATFORM)/
 else
 HIF_DIR	    := os/linux/hif/sdio/
 endif
@@ -223,13 +231,13 @@ HIF_OBJS += $(HIF_DIR)ahb_pdma.o
 else
 HIF_OBJS += $(HIF_DIR)ahb_cqdma.o
 endif
-ifneq ($(wildcard $(src)/$(PLAT_DIR)plat_priv.c),)
-PLAT_OBJS := $(PLAT_DIR)plat_priv.o
-endif
-$(MODULE_NAME)-objs  += $(PLAT_OBJS)
 
 else
 HIF_OBJS += $(HIF_DIR)sdio.o
+endif
+
+ifneq ($(wildcard $(src)/$(PLAT_DIR)plat_priv.c),)
+PLAT_OBJS := $(PLAT_DIR)plat_priv.o
 endif
 
 # ---------------------------------------------------
@@ -251,4 +259,5 @@ $(MODULE_NAME)-objs  += $(NIC_OBJS)
 $(MODULE_NAME)-objs  += $(OS_OBJS)
 $(MODULE_NAME)-objs  += $(HIF_OBJS)
 $(MODULE_NAME)-objs  += $(MGMT_OBJS)
+$(MODULE_NAME)-objs  += $(PLAT_OBJS)
 

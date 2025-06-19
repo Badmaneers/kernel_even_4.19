@@ -161,6 +161,7 @@
 #endif
 
 #if (CFG_SUPPORT_DFS == 1)	/* Add by Enlai */
+#define CFG_DFS_NEWCH_DFS_FORCE_DISCONNECT	1  /* If CSA new channel is DFS channel, link down directly*/
 #define CFG_SUPPORT_QUIET           0	/* Quiet (802.11h) */
 #define CFG_SUPPORT_SPEC_MGMT       1	/* Spectrum Management (802.11h): TPC and DFS */
 #else
@@ -189,8 +190,73 @@
 /* Enable WOW Support */
 #define CFG_WOW_SUPPORT			1
 
+/* Disable WOW EINT mode */
+#ifndef CFG_SUPPORT_WOW_EINT
+#define CFG_SUPPORT_WOW_EINT	0
+#endif
+
+/* Disable magic packet vendor event */
+#ifndef CFG_SUPPORT_MAGIC_PKT_VENDOR_EVENT
+#define CFG_SUPPORT_MAGIC_PKT_VENDOR_EVENT	0
+#endif
+
+/* Enable Mdns offload */
+#ifndef CFG_SUPPORT_MDNS_OFFLOAD
+#define CFG_SUPPORT_MDNS_OFFLOAD	0
+#endif
+
+#if CFG_SUPPORT_MDNS_OFFLOAD
+#ifndef CFG_SUPPORT_MDNS_OFFLOAD_GVA
+#define CFG_SUPPORT_MDNS_OFFLOAD_GVA 0
+#endif
+
+#if CFG_SUPPORT_MDNS_OFFLOAD_GVA
+#define CFG_SUPPORT_MDNS_OFFLOAD_TV 0
+#else
+#define CFG_SUPPORT_MDNS_OFFLOAD_TV 1
+#endif
+
+#define TEST_CODE_FOR_MDNS			0
+#endif
+
 /* Enable A-MSDU RX Reordering Support */
 #define CFG_SUPPORT_RX_AMSDU		1
+
+/* Enable Fragment Support */
+#define CFG_SUPPORT_FRAG_SUPPORT 1
+
+/* Enable frag and de-AMSDU security patch */
+#define CFG_FRAG_DEAMSDU_ATTACK_DETECTION 1
+
+#if (CFG_FRAG_DEAMSDU_ATTACK_DETECTION)
+
+/* Enable A-MSDU Attack Detection */
+#define CFG_SUPPORT_AMSDU_ATTACK_DETECTION 1
+
+/* Enable Fragment Attack Detection */
+#define CFG_SUPPORT_FRAG_ATTACK_DETECTION 1
+
+/* Enable Fake EAPOL Detection */
+#define CFG_SUPPORT_FAKE_EAPOL_DETECTION 1
+
+/* Enable TKIP MIC ERROR Detection */
+#define CFG_SUPPORT_TKIP_MICERROR_DETECTION 1
+
+#else
+
+/* Enable A-MSDU Attack Detection */
+#define CFG_SUPPORT_AMSDU_ATTACK_DETECTION 0
+
+/* Enable Fragment Attack Detection */
+#define CFG_SUPPORT_FRAG_ATTACK_DETECTION 0
+
+/* Enable Fake EAPOL Detection */
+#define CFG_SUPPORT_FAKE_EAPOL_DETECTION 0
+
+/* Enable TKIP MIC ERROR Detection */
+#define CFG_SUPPORT_TKIP_MICERROR_DETECTION 0
+
+#endif
 
 /* Enable Android wake_lock operations */
 #ifdef CONFIG_HAS_WAKELOCK
@@ -326,6 +392,20 @@
 
 #ifndef CFG_CHIP_RESET_SUPPORT
 #define CFG_CHIP_RESET_SUPPORT          0
+#endif
+
+#define CFG_CHIP_RESET_HANG		0
+
+#ifndef CFG_CHIP_RESET_USE_DTS_GPIO_NUM
+#define CFG_CHIP_RESET_USE_DTS_GPIO_NUM 0
+#endif
+
+#ifndef CFG_CHIP_RESET_USE_LINUX_GPIO_API
+#define CFG_CHIP_RESET_USE_LINUX_GPIO_API 0
+#endif
+
+#ifndef CFG_CHIP_RESET_USE_MSTAR_GPIO_API
+#define CFG_CHIP_RESET_USE_MSTAR_GPIO_API 0
 #endif
 
 /*------------------------------------------------------------------------------
@@ -594,6 +674,7 @@
 #define CFG_HOTSPOT_OPTIMIZATION_DTIM           1
 #define CFG_AUTO_CHANNEL_SEL_SUPPORT            1
 
+#define CFG_SUPPORT_SOFTAP_WPA3				0
 /*------------------------------------------------------------------------------
  * Configuration Flags (Linux Only)
  *------------------------------------------------------------------------------
@@ -676,6 +757,11 @@
  *------------------------------------------------------------------------------
  */
 
+#ifndef CFG_SUPPORT_SCHED_SCAN
+#define CFG_SUPPORT_SCHED_SCAN      0
+#endif
+#define SCHED_SCAN_CMD_VERSION      1
+
 #define CFG_SUPPORT_PNO             1
 #define CFG_SUPPORT_TDLS		1
 
@@ -716,6 +802,10 @@
 
 #define CFG_SHOW_MACADDR_SOURCE     1
 
+#ifndef CFG_SUPPORT_802_11R
+#define CFG_SUPPORT_802_11R                    0
+#endif
+
 #define CFG_SUPPORT_802_11V                    0	/* Support 802.11v Wireless Network Management */
 #define CFG_SUPPORT_802_11V_TIMING_MEASUREMENT 0
 #if (CFG_SUPPORT_802_11V_TIMING_MEASUREMENT == 1) && (CFG_SUPPORT_802_11V == 0)
@@ -729,6 +819,8 @@
 #define CFG_SUPPORT_802_11AC                1
 #define CFG_STRICT_CHECK_CAPINFO_PRIVACY    0
 
+#define CFG_SUPPORT_DPP                     0
+
 #define CFG_SUPPORT_WFD                     1
 #define CFG_SUPPORT_WFD_COMPOSE_IE          1
 
@@ -739,6 +831,11 @@
 #define CFG_MTK_STAGE_SCAN					1
 
 #define CFG_SUPPORT_MULTITHREAD             1	/* Enable driver support multicore */
+
+/* add cfg80211 tx/rx api to work queue */
+#ifndef CFG_SUPPORT_CFG80211_QUEUE
+#define CFG_SUPPORT_CFG80211_QUEUE	0
+#endif
 
 #define CFG_SUPPORT_MTK_SYNERGY             1
 
@@ -751,6 +848,10 @@
 #define MAX_DISCONNECT_RECORD          5
 #endif
 
+/* Flags of WAC (Wireless Accessory Configuration) feature */
+#ifndef CFG_SUPPORT_WAC
+#define	CFG_SUPPORT_WAC						0
+#endif
 /*------------------------------------------------------------------------------
  * Flags of bus error tolerance
  *------------------------------------------------------------------------------
@@ -1017,7 +1118,6 @@
 #define CFG_SCAN_CHANNEL_SPECIFIED 1
 #endif
 
-
 /*------------------------------------------------------------------------------
  * Support EFUSE / EEPROM Auto Detect
  *------------------------------------------------------------------------------
@@ -1026,16 +1126,72 @@
 #define CFG_EFUSE_AUTO_MODE_SUPPORT 1
 #endif
 
+
 #ifndef CFG_SUPPORT_CSI
 #define CFG_SUPPORT_CSI 1
 #endif
 
 
 
+/*---------------------------------------------------------------------------
+ * Support thermal API, some project needs enable this config for thermal query
+ *---------------------------------------------------------------------------
+ */
+#ifndef CFG_THERMAL_API_SUPPORT
+#define CFG_THERMAL_API_SUPPORT 0
+#endif
+
+/* Multi 7668 driver support */
+#ifndef CFG_SUPPORT_DUAL_CARD_DUAL_DRIVER_A
+#define CFG_SUPPORT_DUAL_CARD_DUAL_DRIVER_A 0
+#endif
+
+#ifndef CFG_SUPPORT_DUAL_CARD_DUAL_DRIVER_B
+#define CFG_SUPPORT_DUAL_CARD_DUAL_DRIVER_B 0
+#endif
+
+/* Multi dongle support (eg. 7668/7663) */
+#ifndef CFG_SUPPORT_MULTI_DONGLE
+#define CFG_SUPPORT_MULTI_DONGLE 0
+#endif
+
+
+/*------------------------------------------------------------------------------
+ * Support platform power off control scenario
+ * DC off for Mstar DTV
+ *------------------------------------------------------------------------------
+ */
+#ifndef CFG_POWER_OFF_CTRL_SUPPORT
+#define CFG_POWER_OFF_CTRL_SUPPORT	0
+#endif
+
+/*
+*   Add callback for DC off low power settings for MTK DTV
+*/
+#ifndef CFG_DC_USB_WOW_CALLBACK
+#define CFG_DC_USB_WOW_CALLBACK 0
+#endif
+
+
 /*******************************************************************************
 *                             D A T A   T Y P E S
 ********************************************************************************
 */
+
+/*------------------------------------------------------------------------------
+ * Flag of GKI project requirement
+ *------------------------------------------------------------------------------
+ */
+/* 1: filp_open/filp_close/kernel_read/kernel_write can't be used
+ * 0(default): can be used
+ */
+#ifndef CFG_ENABLE_GKI_SUPPORT
+#define CFG_ENABLE_GKI_SUPPORT          0
+#endif
+
+#ifndef CFG_DROP_NOT_MY_BSSID
+#define CFG_DROP_NOT_MY_BSSID 0
+#endif
 
 /*******************************************************************************
 *                            P U B L I C   D A T A

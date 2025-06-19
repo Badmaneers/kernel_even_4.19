@@ -1068,8 +1068,14 @@ nicTxComposeDesc(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo,
 	HAL_MAC_TX_DESC_SET_PORT_INDEX(prTxDesc, ucTarPort);
 
 	ucTarQueue = arTcResourceControl[prMsduInfo->ucTC].ucDestQueueIndex;
-	if (ucTarPort == PORT_INDEX_LMAC)
+	if (ucTarPort == PORT_INDEX_LMAC) {
 		ucTarQueue += (prBssInfo->ucWmmQueSet * WMM_AC_INDEX_NUM);
+	} else if (ucTarPort == PORT_INDEX_MCU &&
+		prMsduInfo->ucControlFlag & MSDU_CONTROL_FLAG_FORCE_TX) {
+		/* To MCU packet with always tx flag */
+		DBGLOG(QM, INFO, "ALTX SEND!\n");
+		ucTarQueue = MAC_TXQ_ALTX_0_INDEX;
+	}
 
 	HAL_MAC_TX_DESC_SET_QUEUE_INDEX(prTxDesc, ucTarQueue);
 
@@ -1380,11 +1386,14 @@ nicTxFillDesc(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo,
 
 		kalMemCopy(prTxDesc, prTxDescTemplate, u4TxDescLength + u4TxDescAppendLength);
 
+		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
+
 		/* Overwrite fields for EOSP or More data */
 		nicTxFillDescByPktOption(prMsduInfo, prTxDesc);
 	}
 	/* Compose TXD by Msdu info */
 	else {
+		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
 		u4TxDescLength = NIC_TX_DESC_LONG_FORMAT_LENGTH;
 		nicTxComposeDesc(prAdapter, prMsduInfo, u4TxDescLength, FALSE, prTxDescBuffer);
 
@@ -1427,7 +1436,6 @@ nicTxFillDesc(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo,
 	if (pu4TxDescLength)
 		*pu4TxDescLength = u4TxDescLength;
 
-	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
 }
 
 VOID
@@ -1591,49 +1599,55 @@ WLAN_STATUS nicTxGenerateDescTemplate(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_
 * @retval VOID
 */
 /*----------------------------------------------------------------------------*/
-VOID nicTxFreeDescTemplate(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec)
+VOID nicTxFreeDescTemplate(IN P_ADAPTER_T prAdapter,
+			    IN P_STA_RECORD_T prStaRec)
 {
-	UINT_8 ucTid;
-	UINT_8 ucTxDescSize;
+	uint8_t ucTid;
+	uint8_t ucTxDescSize;
 	P_HW_MAC_TX_DESC_T prTxDesc;
+	P_HW_MAC_TX_DESC_T prFirstTxDesc = NULL;
 
-	/* This is to lock the process to preventing */
-	/* nicTxFreeDescTemplate while Filling it */
 	KAL_SPIN_LOCK_DECLARATION();
-	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
 
-	DBGLOG(QM, INFO, "Free TXD template for STA[%u] QoS[%u]\n", prStaRec->ucIndex, prStaRec->fgIsQoS);
+	DBGLOG(QM, TRACE, "Free TXD template for STA[%u] QoS[%u]\n",
+	       prStaRec->ucIndex, prStaRec->fgIsQoS);
 
-	if (prStaRec->fgIsQoS) {
-		for (ucTid = 0; ucTid < TX_DESC_TID_NUM; ucTid++) {
-			prTxDesc = (P_HW_MAC_TX_DESC_T) prStaRec->aprTxDescTemplate[ucTid];
+	for (ucTid = 0; ucTid < TX_DESC_TID_NUM; ucTid++) {
+		/* This is to lock the process to preventing */
+		/* nicTxFreeDescTemplate while Filling it */
+		KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
+		if (ucTid == 0)
+			prFirstTxDesc = (P_HW_MAC_TX_DESC_T)
+				prStaRec->aprTxDescTemplate[0];
 
-			if (prTxDesc) {
-				if (HAL_MAC_TX_DESC_IS_LONG_FORMAT(prTxDesc))
-					ucTxDescSize = NIC_TX_DESC_LONG_FORMAT_LENGTH;
-				else
-					ucTxDescSize = NIC_TX_DESC_SHORT_FORMAT_LENGTH;
+		prTxDesc = (P_HW_MAC_TX_DESC_T)
+			prStaRec->aprTxDescTemplate[ucTid];
 
-				kalMemFree(prTxDesc, VIR_MEM_TYPE, ucTxDescSize);
-				prTxDesc = prStaRec->aprTxDescTemplate[ucTid] = NULL;
-			}
+		if (!prTxDesc) {
+			KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
+			continue;
 		}
-	} else {
-		prTxDesc = (P_HW_MAC_TX_DESC_T) prStaRec->aprTxDescTemplate[0];
-		if (prTxDesc) {
-			if (HAL_MAC_TX_DESC_IS_LONG_FORMAT(prTxDesc))
-				ucTxDescSize = NIC_TX_DESC_LONG_FORMAT_LENGTH;
-			else
-				ucTxDescSize = NIC_TX_DESC_SHORT_FORMAT_LENGTH;
 
-			kalMemFree(prTxDesc, VIR_MEM_TYPE, ucTxDescSize);
-			prTxDesc = NULL;
-		}
-		for (ucTid = 0; ucTid < TX_DESC_TID_NUM; ucTid++)
+		if (ucTid > 0 && prTxDesc == prFirstTxDesc) {
+			/* This partial is for prStaRec->fgIsQoS = 0 case
+			 * In this case, prStaRec->aprTxDescTemplate[0:7]'s
+			 * value will be same,
+			 * so should avoid repeated free.
+			 */
 			prStaRec->aprTxDescTemplate[ucTid] = NULL;
-	}
+			KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
+			continue;
+		}
+		if (HAL_MAC_TX_DESC_IS_LONG_FORMAT(prTxDesc))
+			ucTxDescSize = NIC_TX_DESC_LONG_FORMAT_LENGTH;
+		else
+			ucTxDescSize = NIC_TX_DESC_SHORT_FORMAT_LENGTH;
 
-	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
+		prStaRec->aprTxDescTemplate[ucTid] = NULL;
+		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TX_DESC);
+
+		kalMemFree(prTxDesc, VIR_MEM_TYPE, ucTxDescSize);
+	}
 }
 
 /*----------------------------------------------------------------------------*/
@@ -1820,20 +1834,27 @@ WLAN_STATUS nicTxCmd(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInfo, IN UIN
 		prCmdInfo->pucTxp = prMsduInfo->prPacket;
 		prCmdInfo->u4TxpLen = prMsduInfo->u2FrameLength;
 
-		HAL_WRITE_TX_CMD(prAdapter, prCmdInfo, ucTC);
-		/* <4> Management Frame Post-Processing */
-		GLUE_DEC_REF_CNT(prTxCtrl->i4TxMgmtPendingNum);
-
-		DBGLOG(INIT, INFO, "TX MGMT Frame: BSS[%u] WIDX:PID[%u:%u] SEQ[%u] STA[%u] RSP[%u]\n",
-			prMsduInfo->ucBssIndex, prMsduInfo->ucWlanIndex, prMsduInfo->ucPID,
-			prMsduInfo->ucTxSeqNum, prMsduInfo->ucStaRecIndex, prMsduInfo->pfTxDoneHandler ? TRUE : FALSE);
-
 		if (prMsduInfo->pfTxDoneHandler) {
 			/* DBGLOG(INIT, TRACE,("Wait Cmd TxSeqNum:%d\n", prMsduInfo->ucTxSeqNum)); */
 			KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_TXING_MGMT_LIST);
 			QUEUE_INSERT_TAIL(&(prTxCtrl->rTxMgmtTxingQueue), (P_QUE_ENTRY_T) prMsduInfo);
 			KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_TXING_MGMT_LIST);
-		} else {
+			DBGLOG(TX, INFO, "Insert msdu WIDX:PID[%u:%u]\n",
+				prMsduInfo->ucWlanIndex, prMsduInfo->ucPID);
+		}
+
+		DBGLOG(INIT, INFO,
+		"TX MGMT Frame: BSS[%u] WIDX:PID[%u:%u] SEQ[%u] STA[%u] RSP[%u]\n",
+		prMsduInfo->ucBssIndex, prMsduInfo->ucWlanIndex,
+		prMsduInfo->ucPID, prMsduInfo->ucTxSeqNum,
+		prMsduInfo->ucStaRecIndex,
+		prMsduInfo->pfTxDoneHandler ? TRUE : FALSE);
+
+		HAL_WRITE_TX_CMD(prAdapter, prCmdInfo, ucTC);
+		/* <4> Management Frame Post-Processing */
+		GLUE_DEC_REF_CNT(prTxCtrl->i4TxMgmtPendingNum);
+
+		if (prMsduInfo->pfTxDoneHandler == NULL) {
 			cnmMgtPktFree(prAdapter, prMsduInfo);
 		}
 
@@ -3563,7 +3584,7 @@ static WLAN_STATUS nicTxDirectStartXmitMain(struct sk_buff *prSkb, P_MSDU_INFO_T
 	P_STA_RECORD_T prStaRec;	/* The current focused STA */
 	P_BSS_INFO_T prBssInfo;
 	UINT_8 ucTC = 0, ucHifTc = 0;
-	P_QUE_T prTxQue;
+	P_QUE_T prTxQue = NULL;
 	BOOLEAN fgDropPacket = FALSE;
 	P_QUE_ENTRY_T prQueueEntry = (P_QUE_ENTRY_T) NULL;
 	QUE_T rProcessingQue;
@@ -3666,6 +3687,9 @@ static WLAN_STATUS nicTxDirectStartXmitMain(struct sk_buff *prSkb, P_MSDU_INFO_T
 
 		/* Absent BSS handling */
 		nicTxDirectCheckBssAbsentQ(prAdapter, prMsduInfo->ucBssIndex, prProcessingQue);
+
+		/* Pending queue handling */
+		nicTxDirectCheckPendingQ(prTxQue, prStaRec, prProcessingQue);
 
 		if (QUEUE_IS_EMPTY(prProcessingQue))
 			return WLAN_STATUS_SUCCESS;
@@ -3930,5 +3954,48 @@ end:
 		mod_timer(&prAdapter->rTxDirectSkbTimer, jiffies + TX_DIRECT_CHECK_INTERVAL);
 	spin_unlock_bh(&prGlueInfo->rSpinLock[SPIN_LOCK_TX_DIRECT]);
 	return ret;
+}
+
+/*----------------------------------------------------------------------------*/
+/*
+* \brief This function is called by nicTxDirectStartXmitMain().
+*        The purpose is:
+*        Case I (after set key done):
+*        Concatenate MsduInfo from rTxDirectPendingQueue to prQue
+*
+*        Case II (not set key done yet):
+*        Concatenate MsduInfo from prQue to rTxDirectPendingQueue
+*
+* \param[in] prTxQue  Pointer that points to either arTxQueue or
+*                     arPendingTxQueue, which is used to identify
+*                     if set key flow is done or not.
+* \param[in] prStaRec  Pointer of sta record
+* \param[in] prQue  Pointer of MsduInfo queue which to be processed
+*
+* \retval none
+*/
+/*----------------------------------------------------------------------------*/
+VOID nicTxDirectCheckPendingQ(P_QUE_T prTxQue,
+	P_STA_RECORD_T prStaRec, P_QUE_T prQue)
+{
+	P_QUE_T prPendingQue = NULL;
+	UINT_8 ucQAC0 = TX_QUEUE_INDEX_AC0;
+	UINT_8 ucQAC3 = TX_QUEUE_INDEX_AC3;
+
+	if (prStaRec == NULL || prQue == NULL || prTxQue == NULL)
+		return;
+
+	prPendingQue = &prStaRec->rTxDirectPendingQueue;
+
+	/* after set key done */
+	if (prStaRec->fgIsTxAllowed) {
+		if (QUEUE_IS_NOT_EMPTY(prPendingQue))
+			QUEUE_CONCATENATE_QUEUES(prQue, prPendingQue);
+	}
+	/* not set key done yet */
+	else if (prTxQue >= &prStaRec->arPendingTxQueue[ucQAC0] &&
+			prTxQue <= &prStaRec->arPendingTxQueue[ucQAC3]) {
+		QUEUE_CONCATENATE_QUEUES(prPendingQue, prQue);
+	}
 }
 /* TX Direct functions : END */

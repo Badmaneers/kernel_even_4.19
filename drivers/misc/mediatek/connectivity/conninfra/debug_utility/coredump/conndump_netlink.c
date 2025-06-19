@@ -8,6 +8,7 @@
 ********************************************************************************
 */
 
+#include <linux/version.h>
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/mutex.h>
@@ -106,34 +107,41 @@ static struct nla_policy conndump_genl_policy[CONNDUMP_ATTR_MAX + 1] = {
 	[CONNDUMP_ATTR_LAST] = {.type = NLA_U32},
 };
 
-
 /* operation definition */
 static struct genl_ops conndump_gnl_ops_array_wifi[] = {
 	{
 		.cmd = CONNDUMP_COMMAND_BIND,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_bind_wifi,
 		.dumpit = NULL,
 	},
 	{
 		.cmd = CONNDUMP_COMMAND_DUMP,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_dump_wifi,
 		.dumpit = NULL,
 	},
 	{
 		.cmd = CONNDUMP_COMMAND_END,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_dump_end_wifi,
 		.dumpit = NULL,
 	},
 	{
 		.cmd = CONNDUMP_COMMAND_RESET,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_reset_wifi,
 		.dumpit = NULL,
 	},
@@ -143,28 +151,36 @@ static struct genl_ops conndump_gnl_ops_array_bt[] = {
 	{
 		.cmd = CONNDUMP_COMMAND_BIND,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_bind_bt,
 		.dumpit = NULL,
 	},
 	{
 		.cmd = CONNDUMP_COMMAND_DUMP,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_dump_bt,
 		.dumpit = NULL,
 	},
 	{
 		.cmd = CONNDUMP_COMMAND_END,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_dump_end_bt,
 		.dumpit = NULL,
 	},
 	{
 		.cmd = CONNDUMP_COMMAND_RESET,
 		.flags = 0,
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
 		.policy = conndump_genl_policy,
+#endif
 		.doit = conndump_nl_reset_bt,
 		.dumpit = NULL,
 	},
@@ -182,6 +198,9 @@ struct dump_netlink_ctx g_netlink_ctx[2] = {
 			.maxattr = CONNDUMP_ATTR_MAX,
 			.ops = conndump_gnl_ops_array_wifi,
 			.n_ops = ARRAY_SIZE(conndump_gnl_ops_array_wifi),
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+			.policy = conndump_genl_policy,
+#endif
 		},
 		.status = LINK_STATUS_INIT,
 		.num_bind_process = 0,
@@ -198,6 +217,9 @@ struct dump_netlink_ctx g_netlink_ctx[2] = {
 			.maxattr = CONNDUMP_ATTR_MAX,
 			.ops = conndump_gnl_ops_array_bt,
 			.n_ops = ARRAY_SIZE(conndump_gnl_ops_array_bt),
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0))
+			.policy = conndump_genl_policy,
+#endif
 		},
 		.status = LINK_STATUS_INIT,
 		.num_bind_process = 0,
@@ -226,7 +248,7 @@ static int conndump_nl_bind_internal(struct dump_netlink_ctx* ctx, struct sk_buf
 	if (port_na) {
 		port = (unsigned int)nla_get_u32(port_na);
 	} else {
-		pr_err("%s:-> no port_na found\n");
+		pr_notice("%s:-> no port_na found\n", __func__);
 		return -1;
 	}
 
@@ -502,8 +524,8 @@ int conndump_netlink_send_to_native(int conn_type, char* tag, char* buf, unsigne
 	unsigned int remain_len = length;
 	int ret;
 
-	pr_info("[%s] conn_type=%d tag=%s buf=0x%x length=%d\n",
-		__func__, conn_type, tag, buf, length);
+	pr_info("[%s] conn_type=%d tag=%s length=%d\n",
+		__func__, conn_type, tag, length);
 	if ((conn_type < CONN_DEBUG_TYPE_WIFI || conn_type > CONN_DEBUG_TYPE_BT) || tag == NULL) {
 		pr_err("Incorrect type (%d), tag = %s\n", conn_type, tag);
 		return -1;

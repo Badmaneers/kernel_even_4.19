@@ -93,7 +93,8 @@ const uint8_t aucDataRate[] = {
 	RATE_48M,		/* RATE_48M_INDEX */
 	RATE_54M,		/* RATE_54M_INDEX */
 	RATE_VHT_PHY,		/* RATE_VHT_PHY_INDEX */
-	RATE_HT_PHY		/* RATE_HT_PHY_INDEX */
+	RATE_HT_PHY,		/* RATE_HT_PHY_INDEX */
+	RATE_H2E_ONLY		/* RATE_H2E_ONLY_INDEX */
 };
 
 static const uint8_t aucDefaultAckCtsRateIndex[RATE_NUM_SW] = {
@@ -169,7 +170,8 @@ const u_int8_t afgIsOFDMRate[RATE_NUM_SW] = {
  * @param[in] prIeExtSupportedRate       Pointer to the Ext Supported Rate IE
  * @param[out] pu2OperationalRateSet     Pointer to the Operational Rate Set
  * @param[out] pu2BSSBasicRateSet        Pointer to the Basic Rate Set
- * @param[out] pfgIsUnknownBSSBasicRate  Pointer to a Flag to indicate that
+ * @param[out] pfgIsUnknownBSSBasicRate  Pointer to a Flag to indicate
+ that
  *                                       Basic Rate Set has unknown Rate Code
  *
  * \return (none)

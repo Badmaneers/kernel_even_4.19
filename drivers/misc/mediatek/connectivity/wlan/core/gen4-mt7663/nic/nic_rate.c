@@ -457,3 +457,17 @@ nicGetRateIndexFromRateSetWithLimit(
 	return TRUE;
 }
 
+uint16_t nicRateInfo2RateCode(IN uint32_t  u4TxMode,
+	IN uint32_t  u4Rate)
+{
+	uint16_t u2RateCode = 0;
+
+	if (u4TxMode < 5) {
+		u2RateCode |= (u4TxMode << 6);
+		u2RateCode |= u4Rate;
+	} else
+		return -1;
+
+	return u2RateCode;
+}
+

@@ -2853,7 +2853,8 @@ enum regd_state rlmDomainStateTransition(enum regd_state request_state, struct r
 	case REGD_STATE_SET_WW_CORE:
 		if ((old_state == REGD_STATE_SET_WW_CORE) || (old_state == REGD_STATE_INIT)
 		    || old_state == REGD_STATE_SET_COUNTRY_USER
-		    || old_state == REGD_STATE_SET_COUNTRY_IE)
+		    || old_state == REGD_STATE_SET_COUNTRY_IE
+		    || old_state == REGD_STATE_SET_COUNTRY_DRIVER)
 			next_state = request_state;
 
 		break;
@@ -2862,7 +2863,8 @@ enum regd_state rlmDomainStateTransition(enum regd_state request_state, struct r
 		/* Allow user to set multiple times */
 		if ((old_state == REGD_STATE_SET_WW_CORE) || (old_state == REGD_STATE_INIT)
 		    || old_state == REGD_STATE_SET_COUNTRY_USER
-		    || old_state == REGD_STATE_SET_COUNTRY_IE)
+		    || old_state == REGD_STATE_SET_COUNTRY_IE
+		    || old_state == REGD_STATE_SET_COUNTRY_DRIVER)
 			next_state = request_state;
 		else
 			DBGLOG(RLM, ERROR, "Invalid old state = %d\n", old_state);
@@ -2898,16 +2900,6 @@ enum regd_state rlmDomainStateTransition(enum regd_state request_state, struct r
 	g_mtk_regd_control.state = next_state;
 
 	return g_mtk_regd_control.state;
-}
-
-void rlmDomainSetRefWiphy(struct wiphy *pWiphy)
-{
-	g_mtk_regd_control.pRefWiphy = pWiphy;
-}
-
-struct wiphy *rlmDomainGetRefWiphy(void)
-{
-	return g_mtk_regd_control.pRefWiphy;
 }
 
 /**
@@ -2976,7 +2968,6 @@ void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 	 */
 
 	rlmDomainResetActiveChannel();
-	rlmDomainSetRefWiphy(pWiphy);
 
 	ch_count = 0;
 	for (band_idx = 0; band_idx < KAL_NUM_BANDS; band_idx++) {
@@ -3170,6 +3161,8 @@ void rlmDomainSendInfoToFirmware(IN P_ADAPTER_T prAdapter)
 
 	if (g_mtk_regd_control.isEfuseCountryCodeUsed) {
 		request.initiator = NL80211_REGDOM_SET_BY_DRIVER;
+		request.dfs_region = NL80211_DFS_UNSET;
+		request.intersect = false;
 		prReq = &request;
 	}
 

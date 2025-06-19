@@ -310,6 +310,7 @@ int glUnregisterEarlySuspend(struct early_suspend *prDesc)
 }
 #endif
 
+#if (CFG_ENABLE_GKI_SUPPORT != 1)
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief Utility function for reading data from files on NVRAM-FS
@@ -472,7 +473,7 @@ static int nvram_write(char *filename, char *buf,
 
 #endif
 }
-
+#endif
 /*----------------------------------------------------------------------------*/
 /*!
  * \brief API for reading data on NVRAM with flexible length.
@@ -492,15 +493,18 @@ u_int8_t kalCfgDataRead(IN struct GLUE_INFO *prGlueInfo,
 			IN uint32_t u4Offset,
 			IN ssize_t len, OUT uint16_t *pu2Data)
 {
+#if (CFG_ENABLE_GKI_SUPPORT != 1)
 	if (pu2Data == NULL)
 		return FALSE;
-
 	if (nvram_read(WIFI_NVRAM_FILE_NAME,
 		       (char *)pu2Data, len, u4Offset) != len) {
 		return FALSE;
 	} else {
 		return TRUE;
 	}
+#else
+	return FALSE;
+#endif
 }
 
 /*----------------------------------------------------------------------------*/
@@ -520,9 +524,9 @@ u_int8_t kalCfgDataRead(IN struct GLUE_INFO *prGlueInfo,
 u_int8_t kalCfgDataRead16(IN struct GLUE_INFO *prGlueInfo,
 			  IN uint32_t u4Offset, OUT uint16_t *pu2Data)
 {
+#if (CFG_ENABLE_GKI_SUPPORT != 1)
 	if (pu2Data == NULL)
 		return FALSE;
-
 	if (nvram_read(WIFI_NVRAM_FILE_NAME,
 		       (char *)pu2Data, sizeof(unsigned short),
 		       u4Offset) != sizeof(unsigned short)) {
@@ -530,6 +534,9 @@ u_int8_t kalCfgDataRead16(IN struct GLUE_INFO *prGlueInfo,
 	} else {
 		return TRUE;
 	}
+#else
+	return FALSE;
+#endif
 }
 
 /*----------------------------------------------------------------------------*/
@@ -548,6 +555,7 @@ u_int8_t kalCfgDataRead16(IN struct GLUE_INFO *prGlueInfo,
 u_int8_t kalCfgDataWrite16(IN struct GLUE_INFO *prGlueInfo,
 			   uint32_t u4Offset, uint16_t u2Data)
 {
+#if (CFG_ENABLE_GKI_SUPPORT != 1)
 	if (nvram_write(WIFI_NVRAM_FILE_NAME,
 			(char *)&u2Data, sizeof(unsigned short),
 			u4Offset) != sizeof(unsigned short)) {
@@ -555,4 +563,7 @@ u_int8_t kalCfgDataWrite16(IN struct GLUE_INFO *prGlueInfo,
 	} else {
 		return TRUE;
 	}
+#else
+	return FALSE;
+#endif
 }

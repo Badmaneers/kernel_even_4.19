@@ -71,17 +71,19 @@ else
     ccflags-y += -DCFG_SUPPORT_AEE=0
     $(info DCFG_SUPPORT_AEE=0)
 endif
-
+CONFIG_MTK_WPA3_SUPPORT=y
 ifeq ($(CONFIG_MTK_WPA3_SUPPORT), y)
     ccflags-y += -DCFG_SUPPORT_CFG80211_AUTH=1
     ccflags-y += -DCFG_SUPPORT_SAE=1
     ccflags-y += -DCFG_SUPPORT_OWE=1
     ccflags-y += -DCFG_SUPPORT_SUITB=1
+    ccflags-y += -DCFG_SUPPORT_CFG80211_QUEUE=1
 else
     ccflags-y += -DCFG_SUPPORT_CFG80211_AUTH=0
     ccflags-y += -DCFG_SUPPORT_SAE=0
     ccflags-y += -DCFG_SUPPORT_OWE=0
     ccflags-y += -DCFG_SUPPORT_SUITB=0
+    ccflags-y += -DCFG_SUPPORT_CFG80211_QUEUE=0
 endif
 
 # Disable ASSERT() for user load, enable for others
@@ -150,9 +152,13 @@ else
     ccflags-y += -DCFG_MET_TAG_SUPPORT=0
 endif
 
-#ifeq ($(MODULE_NAME),)
-#	MODULE_NAME := wlan_$(shell echo $(strip $(WLAN_CHIP_ID)) | tr A-Z a-z)_$(CONFIG_MTK_COMBO_WIFI_HIF)
-#endif
+# GKI Support(can't use filp_open/close,kernel_read/write in GKI kernel, can't use kallsyms_lookup_name)
+ifeq ($(CONFIG_GKI_SUPPORT), y)
+    ccflags-y += -DCFG_ENABLE_GKI_SUPPORT=1
+    ccflags-y += -DCFG_DC_USB_WOW_CALLBACK=0
+else
+    ccflags-y += -DCFG_ENABLE_GKI_SUPPORT=0
+endif
 
 ccflags-y += -DDBG=0
 ccflags-y += -I$(src)/os -I$(src)/os/linux/include
@@ -287,7 +293,9 @@ MGMT_OBJS += $(MGMT_DIR)wapi.o
 
 ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), sdio)
 HIF_OBJS :=  $(HIF_DIR)arm.o \
-             $(HIF_DIR)sdio.o
+             $(HIF_DIR)sdio.o \
+             $(HIF_DIR)sdio_test_driver_core.o \
+             $(HIF_DIR)sdio_test_driver_ops.o
 else ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), pcie)
 HIF_OBJS :=  $(HIF_DIR)arm.o \
              $(HIF_DIR)pcie.o
@@ -318,3 +326,6 @@ endif
 
 DRIVER_BUILD_DATE=$(shell date +%Y%m%d%H%M%S)
 ccflags-y += -DDRIVER_BUILD_DATE='"$(DRIVER_BUILD_DATE)"'
+
+#Support mobile private cmd, need change cmd size to 512
+ccflags-y += -DCFG_ALPS_ANDROID_AOSP_PRIV_CMD

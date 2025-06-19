@@ -132,6 +132,7 @@
 
 #define CFG_SUPPORT_WAPI			1
 
+#define CFG_SUPPORT_DBDC		0
 /*------------------------------------------------------------------------------
  * Flags of WPA3 support
  *------------------------------------------------------------------------------
@@ -904,7 +905,7 @@
 #define WLAN_INCLUDE_SYS                   0
 #endif
 
-#define CFG_SUPPORT_DETECT_SECURITY_MODE_CHANGE 1
+#define CFG_SUPPORT_DETECT_SECURITY_MODE_CHANGE 0
 #define CFG_IGNORE_INVALID_AUTH_TSN		0
 /*------------------------------------------------------------------------------
  * Flags of drop multicast packet when device suspend

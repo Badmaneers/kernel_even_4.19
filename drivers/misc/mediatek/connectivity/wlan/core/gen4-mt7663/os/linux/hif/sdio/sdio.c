@@ -483,7 +483,7 @@ static int mtk_sdio_pm_suspend(struct device *pDev)
 	struct sdio_func *func;
 	struct GLUE_INFO *prGlueInfo = NULL;
 	struct ADAPTER *prAdapter = NULL;
-	uint8_t count = 0;
+	uint32_t count = 0;
 	uint8_t drv_own_fail = FALSE;
 
 	DBGLOG(HAL, STATE, "mtk_sdio_pm_suspend\n");
@@ -624,7 +624,7 @@ static int mtk_sdio_pm_resume(struct device *pDev)
 {
 	struct sdio_func *func;
 	struct GLUE_INFO *prGlueInfo = NULL;
-	uint8_t count = 0;
+	uint32_t count = 0;
 #if CFG_SUPPORT_WOW_EINT
 	struct ADAPTER *prAdapter = NULL;
 #endif
@@ -684,7 +684,7 @@ static int mtk_sdio_pm_resume(struct device *pDev)
 	glSdioSetState(&prGlueInfo->rHifInfo, SDIO_STATE_READY);
 
 	/* Allow upper layers to call the device hard_start_xmit routine. */
-	netif_tx_start_all_queues(prGlueInfo->prDevHandler);
+	netif_tx_wake_all_queues(prGlueInfo->prDevHandler);
 
 	DBGLOG(HAL, STATE, "<==\n");
 

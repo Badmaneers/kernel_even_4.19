@@ -95,43 +95,140 @@
 uint8_t g_GetResultsBufferedCnt;
 uint8_t g_GetResultsCmdCnt;
 
-static struct nla_policy nla_parse_wifi_policy[
-		 WIFI_ATTRIBUTE_ROAMING_STATE + 1] = {
+const struct nla_policy nal_parse_wifi_setband[
+	QCA_WLAN_VENDOR_ATTR_MAX + 1] = {
+	[QCA_WLAN_VENDOR_ATTR_SETBAND_VALUE] = {.type = NLA_U32},
+	[QCA_WLAN_VENDOR_ATTR_SETBAND_MASK] = {.type = NLA_U32},
+};
+
+const struct nla_policy nla_parse_wifi_attribute[
+		 WIFI_ATTRIBUTE_MAX + 1] = {
 	[WIFI_ATTRIBUTE_BAND] = {.type = NLA_U32},
 	[WIFI_ATTRIBUTE_NUM_CHANNELS] = {.type = NLA_U32},
 	[WIFI_ATTRIBUTE_CHANNEL_LIST] = {.type = NLA_UNSPEC},
 
 	[WIFI_ATTRIBUTE_NUM_FEATURE_SET] = {.type = NLA_U32},
 	[WIFI_ATTRIBUTE_FEATURE_SET] = {.type = NLA_UNSPEC},
-	[WIFI_ATTRIBUTE_PNO_RANDOM_MAC_OUI] = {.type = NLA_UNSPEC},
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[WIFI_ATTRIBUTE_PNO_RANDOM_MAC_OUI] = NLA_POLICY_MIN_LEN(0),
+#elif KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+	[WIFI_ATTRIBUTE_PNO_RANDOM_MAC_OUI] = {.type = NLA_MIN_LEN, .len = 0 },
+#else
+	[WIFI_ATTRIBUTE_PNO_RANDOM_MAC_OUI] = {.type = NLA_BINARY},
+#endif
 	[WIFI_ATTRIBUTE_NODFS_VALUE] = {.type = NLA_U32},
 	[WIFI_ATTRIBUTE_COUNTRY_CODE] = {.type = NLA_STRING},
 
-	[WIFI_ATTRIBUTE_MAX_RSSI] = {.type = NLA_U32},
-	[WIFI_ATTRIBUTE_MIN_RSSI] = {.type = NLA_U32},
-	[WIFI_ATTRIBUTE_RSSI_MONITOR_START] = {.type = NLA_U32},
+#if CFG_SUPPORT_OLD_VENDOR_HAL
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_MAX_RSSI] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_MIN_RSSI] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_START]    = {.type = NLA_U32},
+#endif
 
 	[WIFI_ATTRIBUTE_ROAMING_CAPABILITIES] = {.type = NLA_UNSPEC},
 	[WIFI_ATTRIBUTE_ROAMING_BLACKLIST_NUM] = {.type = NLA_U32},
-	[WIFI_ATTRIBUTE_ROAMING_BLACKLIST_BSSID] = {.type = NLA_UNSPEC},
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[WIFI_ATTRIBUTE_ROAMING_BLACKLIST_BSSID] = NLA_POLICY_MIN_LEN(0),
+#elif KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+	[WIFI_ATTRIBUTE_ROAMING_BLACKLIST_BSSID] = {
+		.type = NLA_MIN_LEN, .len = 0 },
+#else
+	[WIFI_ATTRIBUTE_ROAMING_BLACKLIST_BSSID] = {.type = NLA_BINARY},
+#endif
 	[WIFI_ATTRIBUTE_ROAMING_WHITELIST_NUM] = {.type = NLA_U32},
-	[WIFI_ATTRIBUTE_ROAMING_WHITELIST_SSID] = {.type = NLA_UNSPEC},
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[WIFI_ATTRIBUTE_ROAMING_WHITELIST_SSID] = NLA_POLICY_MIN_LEN(0),
+#elif KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+	[WIFI_ATTRIBUTE_ROAMING_WHITELIST_SSID] = {
+		.type = NLA_MIN_LEN, .len = 0 },
+#else
+	[WIFI_ATTRIBUTE_ROAMING_WHITELIST_SSID] = {.type = NLA_BINARY},
+#endif
 	[WIFI_ATTRIBUTE_ROAMING_STATE] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_TX_POWER_SCENARIO] = {.type = NLA_U32},
 };
 
-static struct nla_policy nla_parse_offloading_policy[
+#if !CFG_SUPPORT_OLD_VENDOR_HAL
+const struct nla_policy nla_parse_wifi_rssi_monitor[
+		WIFI_ATTRIBUTE_RSSI_MONITOR_ATTRIBUTE_MAX + 1] = {
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_MAX_RSSI] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_MIN_RSSI] = {.type = NLA_U32},
+	[WIFI_ATTRIBUTE_RSSI_MONITOR_START]    = {.type = NLA_U32},
+};
+#endif
+
+const struct nla_policy nla_get_version_policy[
+		LOGGER_ATTRIBUTE_MAX + 1] = {
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[LOGGER_ATTRIBUTE_DRIVER_VER] = NLA_POLICY_MIN_LEN(0),
+	[LOGGER_ATTRIBUTE_FW_VER] = NLA_POLICY_MIN_LEN(0),
+#elif KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+	[LOGGER_ATTRIBUTE_DRIVER_VER] = { .type = NLA_MIN_LEN, .len = 0 },
+	[LOGGER_ATTRIBUTE_FW_VER] = { .type = NLA_MIN_LEN, .len = 0 },
+#else
+	[LOGGER_ATTRIBUTE_DRIVER_VER] = { .type = NLA_UNSPEC },
+	[LOGGER_ATTRIBUTE_FW_VER] = { .type = NLA_UNSPEC },
+#endif
+};
+
+const struct nla_policy nla_parse_offloading_policy[
 		 MKEEP_ALIVE_ATTRIBUTE_PERIOD_MSEC + 1] = {
 	[MKEEP_ALIVE_ATTRIBUTE_ID] = {.type = NLA_U8},
-	[MKEEP_ALIVE_ATTRIBUTE_IP_PKT] = {.type = NLA_UNSPEC},
+	[MKEEP_ALIVE_ATTRIBUTE_IP_PKT] = {.type = NLA_BINARY},
 	[MKEEP_ALIVE_ATTRIBUTE_IP_PKT_LEN] = {.type = NLA_U16},
-	[MKEEP_ALIVE_ATTRIBUTE_SRC_MAC_ADDR] = {.type = NLA_UNSPEC},
-	[MKEEP_ALIVE_ATTRIBUTE_DST_MAC_ADDR] = {.type = NLA_UNSPEC},
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[MKEEP_ALIVE_ATTRIBUTE_SRC_MAC_ADDR] =
+		NLA_POLICY_EXACT_LEN_WARN(MAC_ADDR_LEN),
+	[MKEEP_ALIVE_ATTRIBUTE_DST_MAC_ADDR] =
+		NLA_POLICY_EXACT_LEN_WARN(MAC_ADDR_LEN),
+#else
+	[MKEEP_ALIVE_ATTRIBUTE_SRC_MAC_ADDR] = {
+		.type = NLA_BINARY, .len = MAC_ADDR_LEN},
+	[MKEEP_ALIVE_ATTRIBUTE_DST_MAC_ADDR] = {
+		.type = NLA_BINARY, .len = MAC_ADDR_LEN},
+#endif
 	[MKEEP_ALIVE_ATTRIBUTE_PERIOD_MSEC] = {.type = NLA_U32},
 };
 
-static struct nla_policy nla_get_preferred_freq_list_policy[
-		WIFI_VENDOR_ATTR_PREFERRED_FREQ_LIST_MAX] = {
+const struct nla_policy nla_get_preferred_freq_list_policy[
+		WIFI_VENDOR_ATTR_PREFERRED_FREQ_LIST_MAX + 1] = {
 	[WIFI_VENDOR_ATTR_PREFERRED_FREQ_LIST_IFACE_TYPE] = {.type = NLA_U32},
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[WIFI_VENDOR_ATTR_PREFERRED_FREQ_LIST_GET] = NLA_POLICY_MIN_LEN(0),
+#endif
+};
+
+const struct nla_policy nla_get_acs_policy[
+		WIFI_VENDOR_ATTR_ACS_MAX + 1] = {
+	[WIFI_VENDOR_ATTR_ACS_HW_MODE] = { .type = NLA_U8 },
+	[WIFI_VENDOR_ATTR_ACS_HT_ENABLED] = { .type = NLA_FLAG },
+	[WIFI_VENDOR_ATTR_ACS_HT40_ENABLED] = { .type = NLA_FLAG },
+	[WIFI_VENDOR_ATTR_ACS_VHT_ENABLED] = { .type = NLA_FLAG },
+	[WIFI_VENDOR_ATTR_ACS_CHWIDTH] = { .type = NLA_U16 },
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[WIFI_VENDOR_ATTR_ACS_CH_LIST] = NLA_POLICY_MIN_LEN(0),
+	[WIFI_VENDOR_ATTR_ACS_FREQ_LIST] = NLA_POLICY_MIN_LEN(0),
+#elif KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+	[WIFI_VENDOR_ATTR_ACS_CH_LIST] = { .type = NLA_MIN_LEN, .len = 0 },
+	[WIFI_VENDOR_ATTR_ACS_FREQ_LIST] = { .type = NLA_MIN_LEN, .len = 0 },
+#else
+	[WIFI_VENDOR_ATTR_ACS_CH_LIST] = { .type = NLA_UNSPEC },
+	[WIFI_VENDOR_ATTR_ACS_FREQ_LIST] = { .type = NLA_UNSPEC },
+#endif
+};
+
+const struct nla_policy nla_get_apf_policy[
+		APF_ATTRIBUTE_MAX + 1] = {
+	[APF_ATTRIBUTE_VERSION] = {.type = NLA_U32},
+	[APF_ATTRIBUTE_MAX_LEN] = {.type = NLA_U32},
+#if KERNEL_VERSION(5, 9, 0) <= CFG80211_VERSION_CODE
+	[APF_ATTRIBUTE_PROGRAM] = NLA_POLICY_MIN_LEN(0),
+#elif KERNEL_VERSION(5, 4, 0) <= CFG80211_VERSION_CODE
+	[APF_ATTRIBUTE_PROGRAM] = {.type = NLA_MIN_LEN, .len = 0},
+#else
+	[APF_ATTRIBUTE_PROGRAM] = {.type = NLA_UNSPEC},
+#endif
+	[APF_ATTRIBUTE_PROGRAM_LEN] = {.type = NLA_U32},
 };
 
 /*******************************************************************************
@@ -850,21 +947,25 @@ int mtk_cfg80211_vendor_set_rssi_monitoring(
 	if (NLA_PARSE_NESTED(attr,
 			     WIFI_ATTRIBUTE_RSSI_MONITOR_START,
 			     (struct nlattr *)(data - NLA_HDRLEN),
-			     nla_parse_wifi_policy) < 0) {
+#if KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE
+				 nla_parse_wifi_rssi_monitor) < 0) {
+#else
+				 nla_parse_wifi_attribute) < 0) {
+#endif
 		DBGLOG(REQ, ERROR, "%s nla_parse_nested failed\n",
 		       __func__);
 		goto nla_put_failure;
 	}
 
-	for (i = WIFI_ATTRIBUTE_MAX_RSSI;
+	for (i = WIFI_ATTRIBUTE_RSSI_MONITOR_MAX_RSSI;
 	     i <= WIFI_ATTRIBUTE_RSSI_MONITOR_START; i++) {
 		if (attr[i]) {
 			switch (i) {
-			case WIFI_ATTRIBUTE_MAX_RSSI:
+			case WIFI_ATTRIBUTE_RSSI_MONITOR_MAX_RSSI:
 				rRSSIMonitor.max_rssi_value =
 					nla_get_u32(attr[i]);
 				break;
-			case WIFI_ATTRIBUTE_MIN_RSSI:
+			case WIFI_ATTRIBUTE_RSSI_MONITOR_MIN_RSSI:
 				rRSSIMonitor.min_rssi_value
 					= nla_get_u32(attr[i]);
 				break;
@@ -1398,6 +1499,235 @@ int mtk_cfg80211_vendor_get_preferred_freq_list(struct wiphy
 		DBGLOG(REQ, ERROR, "put freq list into skb failed.\n");
 		goto nla_put_failure;
 	}
+
+	return cfg80211_vendor_cmd_reply(skb);
+
+nla_put_failure:
+	kfree_skb(skb);
+	return -EFAULT;
+}
+
+int mtk_cfg80211_vendor_acs(struct wiphy *wiphy,
+		struct wireless_dev *wdev, const void *data, int data_len)
+{
+	struct GLUE_INFO *prGlueInfo;
+	struct nlattr *tb[WIFI_VENDOR_ATTR_ACS_MAX + 1] = {};
+	uint32_t rStatus = WLAN_STATUS_SUCCESS;
+	bool ht_enabled, ht40_enabled, vht_enabled;
+	uint8_t ch_width = 0;
+	enum P2P_VENDOR_ACS_HW_MODE hw_mode;
+	uint8_t *ch_list = NULL;
+	uint8_t ch_list_count = 0;
+	uint8_t i;
+	uint32_t msg_size;
+	struct MSG_P2P_ACS_REQUEST *prMsgAcsRequest;
+	struct RF_CHANNEL_INFO *prRfChannelInfo;
+	struct sk_buff *reply_skb;
+	uint8_t role_idx;
+
+	if (!wiphy || !wdev || !data || !data_len) {
+		DBGLOG(REQ, ERROR, "input data null.\n");
+		rStatus = -EINVAL;
+		goto exit;
+	}
+
+#if CFG_ENABLE_UNIFY_WIPHY
+	prGlueInfo = (struct GLUE_INFO *) wiphy_priv(wiphy);
+#else	/* CFG_ENABLE_UNIFY_WIPHY */
+	if (wdev == gprWdev)	/* wlan0 */
+		prGlueInfo = (struct GLUE_INFO *) wiphy_priv(wiphy);
+	else
+		prGlueInfo = *((struct GLUE_INFO **) wiphy_priv(wiphy));
+#endif	/* CFG_ENABLE_UNIFY_WIPHY */
+
+	if (!prGlueInfo) {
+		DBGLOG(REQ, ERROR, "get glue structure fail.\n");
+		rStatus = -EFAULT;
+		goto exit;
+	}
+
+	if (mtk_Netdev_To_RoleIdx(prGlueInfo, wdev->netdev, &role_idx) < 0) {
+		DBGLOG(REQ, ERROR, "get role index fail.\n");
+		rStatus = -EFAULT;
+		goto exit;
+	}
+
+	if (NLA_PARSE(tb, WIFI_VENDOR_ATTR_ACS_MAX, data, data_len,
+			nla_get_acs_policy)) {
+		DBGLOG(REQ, ERROR, "parse acs attr fail.\n");
+		rStatus = -EINVAL;
+		goto exit;
+	}
+
+	if (!tb[WIFI_VENDOR_ATTR_ACS_HW_MODE]) {
+		DBGLOG(REQ, ERROR, "attr hw_mode failed.\n");
+		rStatus = -EINVAL;
+		goto exit;
+	}
+	hw_mode = nla_get_u8(tb[WIFI_VENDOR_ATTR_ACS_HW_MODE]);
+
+	if (tb[WIFI_VENDOR_ATTR_ACS_HT_ENABLED])
+		ht_enabled =
+			nla_get_flag(tb[WIFI_VENDOR_ATTR_ACS_HT_ENABLED]);
+	else
+		ht_enabled = 0;
+
+	if (tb[WIFI_VENDOR_ATTR_ACS_HT40_ENABLED])
+		ht40_enabled =
+			nla_get_flag(tb[WIFI_VENDOR_ATTR_ACS_HT40_ENABLED]);
+	else
+		ht40_enabled = 0;
+
+	if (tb[WIFI_VENDOR_ATTR_ACS_VHT_ENABLED])
+		vht_enabled =
+			nla_get_flag(tb[WIFI_VENDOR_ATTR_ACS_VHT_ENABLED]);
+	else
+		vht_enabled = 0;
+
+	if (tb[WIFI_VENDOR_ATTR_ACS_CHWIDTH])
+		ch_width = nla_get_u16(tb[WIFI_VENDOR_ATTR_ACS_CHWIDTH]);
+
+	if (tb[WIFI_VENDOR_ATTR_ACS_CH_LIST]) {
+		char *tmp = nla_data(tb[WIFI_VENDOR_ATTR_ACS_CH_LIST]);
+
+		ch_list_count = nla_len(tb[WIFI_VENDOR_ATTR_ACS_CH_LIST]);
+		if (ch_list_count) {
+			ch_list = kalMemAlloc(sizeof(uint8_t) * ch_list_count,
+					VIR_MEM_TYPE);
+			if (ch_list == NULL) {
+				DBGLOG(REQ, ERROR, "allocate ch_list fail.\n");
+				rStatus = -ENOMEM;
+				goto exit;
+			}
+
+			kalMemCopy(ch_list, tmp, ch_list_count);
+		}
+	} else if (tb[WIFI_VENDOR_ATTR_ACS_FREQ_LIST]) {
+		uint32_t *freq =
+			nla_data(tb[WIFI_VENDOR_ATTR_ACS_FREQ_LIST]);
+
+		ch_list_count = nla_len(tb[WIFI_VENDOR_ATTR_ACS_FREQ_LIST]) /
+				sizeof(uint32_t);
+		if (ch_list_count) {
+			ch_list = kalMemAlloc(sizeof(uint8_t) * ch_list_count,
+					VIR_MEM_TYPE);
+			if (ch_list == NULL) {
+				DBGLOG(REQ, ERROR, "allocate ch_list fail.\n");
+				rStatus = -ENOMEM;
+				goto exit;
+			}
+
+			for (i = 0; i < ch_list_count; i++)
+				ch_list[i] =
+					ieee80211_frequency_to_channel(freq[i]);
+		}
+	}
+
+	if (!ch_list_count) {
+		DBGLOG(REQ, ERROR, "channel list count can NOT be 0\n");
+		rStatus = -EINVAL;
+		goto exit;
+	}
+
+	msg_size = sizeof(struct MSG_P2P_ACS_REQUEST) +
+			(ch_list_count * sizeof(struct RF_CHANNEL_INFO));
+
+	prMsgAcsRequest = cnmMemAlloc(prGlueInfo->prAdapter,
+			RAM_TYPE_MSG, msg_size);
+
+	if (prMsgAcsRequest == NULL) {
+		DBGLOG(REQ, ERROR, "allocate msg acs req. fail.\n");
+		rStatus = -ENOMEM;
+		goto exit;
+	}
+
+	kalMemSet(prMsgAcsRequest, 0, msg_size);
+	prMsgAcsRequest->rMsgHdr.eMsgId = MID_MNY_P2P_ACS;
+	prMsgAcsRequest->ucRoleIdx = role_idx;
+	prMsgAcsRequest->fgIsHtEnable = ht_enabled;
+	prMsgAcsRequest->fgIsHt40Enable = ht40_enabled;
+	prMsgAcsRequest->fgIsVhtEnable = vht_enabled;
+	switch (ch_width) {
+	case 20:
+		prMsgAcsRequest->eChnlBw = MAX_BW_20MHZ;
+		break;
+	case 40:
+		prMsgAcsRequest->eChnlBw = MAX_BW_40MHZ;
+		break;
+	case 80:
+		prMsgAcsRequest->eChnlBw = MAX_BW_80MHZ;
+		break;
+	case 160:
+		prMsgAcsRequest->eChnlBw = MAX_BW_160MHZ;
+		break;
+	default:
+		DBGLOG(REQ, ERROR, "unsupport width: %d.\n", ch_width);
+		prMsgAcsRequest->eChnlBw = MAX_BW_UNKNOWN;
+		break;
+	}
+	prMsgAcsRequest->eHwMode = hw_mode;
+	prMsgAcsRequest->u4NumChannel = ch_list_count;
+
+	for (i = 0; i < ch_list_count; i++) {
+		/* Translate Freq from MHz to channel number. */
+		prRfChannelInfo =
+			&(prMsgAcsRequest->arChannelListInfo[i]);
+
+		prRfChannelInfo->ucChannelNum = ch_list[i];
+
+		if (prRfChannelInfo->ucChannelNum <= 14)
+			prRfChannelInfo->eBand = BAND_2G4;
+		else
+			prRfChannelInfo->eBand = BAND_5G;
+
+		/* Iteration. */
+		prRfChannelInfo++;
+	}
+
+	mboxSendMsg(prGlueInfo->prAdapter,
+			MBOX_ID_0,
+			(struct MSG_HDR *) prMsgAcsRequest,
+			MSG_SEND_METHOD_BUF);
+
+exit:
+	if (ch_list)
+		kalMemFree(ch_list, VIR_MEM_TYPE,
+				sizeof(uint8_t) * ch_list_count);
+	if (rStatus == WLAN_STATUS_SUCCESS) {
+		reply_skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy,
+				NLMSG_HDRLEN);
+		if (reply_skb != NULL)
+			return cfg80211_vendor_cmd_reply(reply_skb);
+	}
+	return rStatus;
+}
+
+int mtk_cfg80211_vendor_get_apf_capabilities(struct wiphy *wiphy,
+	struct wireless_dev *wdev, const void *data, int data_len)
+{
+	uint32_t aucCapablilities[2] = {APF_VERSION, APF_MAX_PROGRAM_LEN};
+	struct sk_buff *skb;
+
+	ASSERT(wiphy);
+	ASSERT(wdev);
+
+	skb = cfg80211_vendor_cmd_alloc_reply_skb(wiphy,
+		sizeof(aucCapablilities));
+
+	if (!skb) {
+		DBGLOG(REQ, ERROR, "Allocate skb failed\n");
+		return -ENOMEM;
+	}
+
+	if (unlikely(nla_put(skb, APF_ATTRIBUTE_VERSION,
+				sizeof(uint32_t), &aucCapablilities[0]) < 0))
+		goto nla_put_failure;
+	if (unlikely(nla_put(skb, APF_ATTRIBUTE_MAX_LEN,
+				sizeof(uint32_t), &aucCapablilities[1]) < 0))
+		goto nla_put_failure;
+
+	DBGLOG(REQ, INFO, "apf capability - ver:%d, max program len: %d\n",
+		APF_VERSION, APF_MAX_PROGRAM_LEN);
 
 	return cfg80211_vendor_cmd_reply(skb);
 

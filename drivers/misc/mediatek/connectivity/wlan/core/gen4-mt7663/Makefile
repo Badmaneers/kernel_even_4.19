@@ -150,6 +150,11 @@ ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), sdio)
 ifeq ($(CONFIG_SDIO_AGG_THREAD), y)
     ccflags-y += -D_SDIO_RING=1
 endif
+
+ifeq ($(CONFIG_SDIO_RX_DE_AGG_IN_THREAD), y)
+ccflags-y += -DCFG_SDIO_RX_DE_AGG_IN_THREAD=1
+endif
+
 else ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), pcie)
     ccflags-y += -D_HIF_PCIE=1
 else ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), usb)
@@ -174,11 +179,14 @@ endif
 
 # For Thermal module API
 # 1: enable, 0: disable
-ccflags-y += -DCFG_THERMAL_API_SUPPORT=1
+ccflags-y += -DCFG_THERMAL_API_SUPPORT=0
 # For WAC module API
 # 1: enable, 0: disable
 ccflags-y += -DCFG_SUPPORT_WAC=0
 
+# For Register DC wow callback
+# 1: enable, 0: disable
+ccflags-y += -DCFG_DC_USB_WOW_CALLBACK=0
 ifeq ($(CFG_ENABLE_1RPD_MMPS_CTRL), y)
     ccflags-y += -DCFG_ENABLE_1RPD_MMPS_CTRL=1
 endif
@@ -232,11 +240,57 @@ else
     ccflags-y += -DCFG_TC1_FEATURE=0
 endif
 
+ifeq ($(CONFIG_WIFI_WAKE_ON_PNO), y)
+    ccflags-y += -DCONFIG_WIFI_WAKE_ON_PNO=1
+endif
+
+# Tp Enhance
+ifeq ($(CONFIG_MTK_TPENHANCE_MODE), y)
+    ccflags-y += -DCFG_SUPPORT_TPENHANCE_MODE=1
+    ccflags-y += -DCFG_FORCE_ENABLE_PERF_MONITOR=1
+else
+    ccflags-y += -DCFG_SUPPORT_TPENHANCE_MODE=0
+endif
+
 # RX NAPI
 CFG_RX_NAPI_SUPPORT=1
 ifneq ($(CFG_RX_NAPI_SUPPORT),)
 	ccflags-y += -DCFG_RX_NAPI_SUPPORT=$(CFG_RX_NAPI_SUPPORT)
 endif
+# Easymesh
+ifeq ($(CFG_MTK_EASYMESH), y)
+    ccflags-y += -DCFG_CCN7_SAP_EASYMESH=1
+    ccflags-y += -DCFG_AP_80211K_SUPPORT=1
+    ccflags-y += -DCFG_AP_80211V_SUPPORT=1
+endif
+
+# 1: Enable Support Linux TCP segmentation offload(TSO)
+# 0: Disable (default)
+#CFG_SUPPORT_TX_TSO_SW=0
+ifneq ($(CFG_SUPPORT_TX_TSO_SW),)
+	ccflags-y += -DCFG_SUPPORT_TX_TSO_SW=$(CFG_SUPPORT_TX_TSO_SW)
+endif
+
+# GKI Support(can't use filp_open/close,kernel_read/write in GKI kernel, can't use kallsyms_lookup_name)
+ifeq ($(CONFIG_GKI_SUPPORT), y)
+    ccflags-y += -DCFG_ENABLE_GKI_SUPPORT=1
+    ccflags-y += -DCFG_DC_USB_WOW_CALLBACK=0
+else
+    ccflags-y += -DCFG_ENABLE_GKI_SUPPORT=0
+endif
+
+# For Android Vendor Hal
+# 1: Use Old Vendor HAL, 0: Use New Vendor HAL
+# default use new wndor
+# Android S: 0 means use new
+# Before Android S and kernel < 5.4: should use 1 means use old hal
+# Before Android S and kernel >= 5.4: should use 0 means use new hal and sync patch 5188442
+ccflags-y += -DCFG_SUPPORT_OLD_VENDOR_HAL=0
+
+# For Schedule scan
+# 1: enable, 0: disable
+ccflags-y += -DCFG_SUPPORT_SCHED_SCAN=1
+
 #ifeq ($(MODULE_NAME),)
 #	MODULE_NAME := wlan_$(shell echo $(strip $(WLAN_CHIP_ID)) | tr A-Z a-z)_$(CONFIG_MTK_COMBO_WIFI_HIF)
 #endif

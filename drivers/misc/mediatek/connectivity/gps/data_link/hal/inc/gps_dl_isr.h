@@ -1,15 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright (C) 2019 MediaTek Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
- * See http://www.gnu.org/licenses/gpl-2.0.html for more details.
+ * Copyright (c) 2019 - 2021 MediaTek Inc.
  */
+
 #ifndef _GPS_DL_ISR_H
 #define _GPS_DL_ISR_H
 
@@ -48,7 +41,7 @@ struct gps_each_irq {
 };
 
 #define IRQ_IDX_IS_VALID(irq_idx) \
-	(((irq_idx) >= 0) && ((irq_idx) < GPS_DL_IRQ_NUM))
+	((unsigned int)(irq_idx) < (unsigned int)GPS_DL_IRQ_NUM)
 
 #define ASSERT_IRQ_IDX(irq_idx, ret) \
 	GDL_ASSERT(IRQ_IDX_IS_VALID(irq_idx), ret, "invalid irq index: %d", irq_idx)
@@ -63,7 +56,7 @@ enum gps_dl_each_link_irq_type {
 	GPS_DL_IRQ_TYPE_NUM,
 };
 #define IRQ_TYPE_IS_VALID(irq_type) \
-	(((irq_type) >= 0) && ((irq_type) < GPS_DL_IRQ_TYPE_NUM))
+	((unsigned int)(irq_type) < (unsigned int)GPS_DL_IRQ_TYPE_NUM)
 
 #define ASSERT_IRQ_TYPE(irq_type, ret) \
 	GDL_ASSERT(IRQ_TYPE_IS_VALID(irq_type), ret, "invalid irq type: %d", irq_type)

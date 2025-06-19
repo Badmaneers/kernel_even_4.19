@@ -136,6 +136,10 @@ extern u_int8_t g_fgIsOid;
 	GLUE_FLAG_HIF_TX_CMD | GLUE_FLAG_HIF_FW_OWN)
 
 #define GLUE_FLAG_RX_PROCESS (GLUE_FLAG_HALT | GLUE_FLAG_RX_TO_OS)
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+#define GLUE_FLAG_RX_DE_AGG_PROCESS (GLUE_FLAG_HALT | \
+	GLUE_FLAG_RX_DE_AGG_IN_THREAD)
+#endif
 #else
 /* All flags for single thread driver */
 #define GLUE_FLAG_TX_PROCESS  0xFFFFFFFF
@@ -220,6 +224,9 @@ enum ENUM_SPIN_LOCK_CATEGORY_E {
 	SPIN_LOCK_RX_QUE,
 	SPIN_LOCK_RX_FREE_QUE,
 	SPIN_LOCK_TX_QUE,
+#if CFG_SUPPORT_TPENHANCE_MODE
+	SPIN_LOCK_TXACK_QUE,
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
 	SPIN_LOCK_CMD_QUE,
 	SPIN_LOCK_TX_RESOURCE,
 	SPIN_LOCK_CMD_RESOURCE,
@@ -290,7 +297,7 @@ enum ENUM_KAL_MEM_ALLOCATION_TYPE_E {
 };
 
 #ifdef CONFIG_ANDROID		/* Defined in Android kernel source */
-#if (KERNEL_VERSION(4, 9, 0) <= LINUX_VERSION_CODE)
+#if (KERNEL_VERSION(4, 9, 0) <= CFG80211_VERSION_CODE)
 #define KAL_WAKE_LOCK_T struct wakeup_source
 #else
 #define KAL_WAKE_LOCK_T struct wake_lock
@@ -455,6 +462,12 @@ enum ENUM_CFG80211_TX_FLAG {
 #endif
 #endif
 
+enum ENUM_PKT_PATH {
+	PKT_PATH_TX = 0,
+	PKT_PATH_RX,
+	PKT_PATH_ALL
+};
+
 /*******************************************************************************
  *                            P U B L I C   D A T A
  *******************************************************************************
@@ -603,59 +616,160 @@ static inline void kalCfg80211ScanDone(struct cfg80211_scan_request *request,
 /* Macros of wake_lock operations for using in Driver Layer                   */
 /*----------------------------------------------------------------------------*/
 #if CFG_ENABLE_WAKE_LOCK
-/* CONFIG_ANDROID is defined in Android kernel source */
-#if (KERNEL_VERSION(4, 9, 0) <= LINUX_VERSION_CODE)
-#define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName) \
-	wakeup_source_init(_prWakeLock, _pcName)
+/* CFG_ENABLE_WAKE_LOCK is defined in config.h ANDROID defined */
+#if (KERNEL_VERSION(5, 1, 0) <= LINUX_VERSION_CODE)
+/* TODO: wakeup_source_init/wakeup_source_trash removed from v5.1
+* Update KAL_WAKE_LOCK_INIT/DESTROY to equivalent ways
+*/
+#define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName) ({ \
+	_prWakeLock = kalMemAlloc(sizeof(KAL_WAKE_LOCK_T), \
+		VIR_MEM_TYPE); \
+	if (!_prWakeLock) { \
+		DBGLOG(HAL, ERROR, \
+			"KAL_WAKE_LOCK_INIT init fail!\n"); \
+	} \
+	else { \
+		memset(_prWakeLock, 0, sizeof(*(_prWakeLock))); \
+		(_prWakeLock)->name = _pcName; \
+		wakeup_source_add(_prWakeLock); \
+	} \
+})
 
-#define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock) \
-	wakeup_source_trash(_prWakeLock)
+#define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock) ({ \
+	if (_prWakeLock) { \
+		wakeup_source_remove(_prWakeLock); \
+		kalMemFree(_prWakeLock, VIR_MEM_TYPE, \
+			sizeof(KAL_WAKE_LOCK_T)); \
+		_prWakeLock = NULL; \
+	} \
+})
 
 #define KAL_WAKE_LOCK(_prAdapter, _prWakeLock) ({ \
 	u_int8_t state = 0; \
-	if (halIsHifStateReady(_prAdapter, &state)) { \
+	if (_prWakeLock && halIsHifStateReady(_prAdapter, &state)) { \
 		__pm_stay_awake(_prWakeLock); \
 	} \
 })
 
 #define KAL_WAKE_LOCK_TIMEOUT(_prAdapter, _prWakeLock, _u4Timeout) ({ \
 	u_int8_t state = 0; \
-	if (halIsHifStateReady(_prAdapter, &state)) { \
+	if (_prWakeLock && halIsHifStateReady(_prAdapter, &state)) { \
 		__pm_wakeup_event(_prWakeLock, _u4Timeout); \
 	} \
 })
-#define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock) \
-	__pm_relax(_prWakeLock)
+
+#define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock) ({\
+	if (_prWakeLock) \
+		__pm_relax(_prWakeLock); \
+})
 
 #define KAL_WAKE_LOCK_ACTIVE(_prAdapter, _prWakeLock) \
-	((_prWakeLock)->active)
+	(_prWakeLock && (_prWakeLock)->active)
 
-#else
+#elif (KERNEL_VERSION(4, 9, 0) <= LINUX_VERSION_CODE)
+#if (KERNEL_VERSION(4, 14, 149) <= LINUX_VERSION_CODE)
 #define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName) \
-	wake_lock_init(_prWakeLock, WAKE_LOCK_SUSPEND, _pcName)
+	(_prWakeLock = wakeup_source_register(NULL, _pcName))
 
 #define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock) \
-	wake_lock_destroy(_prWakeLock)
+{ \
+	if (_prWakeLock) { \
+		wakeup_source_unregister(_prWakeLock); \
+		_prWakeLock = NULL; \
+	} \
+}
+
+#else
+
+#define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName) \
+{ \
+	_prWakeLock = kalMemAlloc(sizeof(KAL_WAKE_LOCK_T), \
+		VIR_MEM_TYPE); \
+	if (!_prWakeLock) { \
+		DBGLOG(HAL, ERROR, \
+			"KAL_WAKE_LOCK_INIT init fail!\n"); \
+	} \
+	else { \
+		wakeup_source_init(_prWakeLock, _pcName); \
+	} \
+}
+
+#define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock) \
+{ \
+	if (_prWakeLock) { \
+		wakeup_source_trash(_prWakeLock); \
+		kalMemFree(_prWakeLock, VIR_MEM_TYPE, \
+			sizeof(KAL_WAKE_LOCK_T)); \
+		_prWakeLock = NULL; \
+	} \
+}
+
+#endif
+
+#define KAL_WAKE_LOCK(_prAdapter, _prWakeLock) ({ \
+		u_int8_t state = 0; \
+		if (_prWakeLock && halIsHifStateReady(_prAdapter, &state)) { \
+			__pm_stay_awake(_prWakeLock); \
+		} \
+	})
+
+#define KAL_WAKE_LOCK_TIMEOUT(_prAdapter, _prWakeLock, _u4Timeout) ({ \
+		u_int8_t state = 0; \
+		if (_prWakeLock && halIsHifStateReady(_prAdapter, &state)) { \
+			__pm_wakeup_event(_prWakeLock, _u4Timeout); \
+		} \
+	})
+
+#define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock) ({ \
+	if (_prWakeLock) \
+		__pm_relax(_prWakeLock); \
+	})
+
+#define KAL_WAKE_LOCK_ACTIVE(_prAdapter, _prWakeLock) \
+		(_prWakeLock && (_prWakeLock)->active)
+
+#else
+#define KAL_WAKE_LOCK_INIT(_prAdapter, _prWakeLock, _pcName) ({\
+	_prWakeLock = kalMemAlloc(sizeof(KAL_WAKE_LOCK_T), \
+		VIR_MEM_TYPE); \
+	if (!_prWakeLock) { \
+		DBGLOG(HAL, ERROR, \
+			"KAL_WAKE_LOCK_INIT init fail!\n"); \
+	} \
+	else { \
+		wake_lock_init(_prWakeLock, WAKE_LOCK_SUSPEND, _pcName); \
+	} \
+})
+
+#define KAL_WAKE_LOCK_DESTROY(_prAdapter, _prWakeLock) ({\
+	 if (_prWakeLock) { \
+		wake_lock_destroy(_prWakeLock); \
+		_prWakeLock = NULL; \
+	 } \
+})
 
 #define KAL_WAKE_LOCK(_prAdapter, _prWakeLock) ({ \
 	u_int8_t state = 0; \
-	if (halIsHifStateReady(_prAdapter, &state)) { \
+	if (_prWakeLock && halIsHifStateReady(_prAdapter, &state)) { \
 		wake_lock(_prWakeLock); \
 	} \
 })
 
 #define KAL_WAKE_LOCK_TIMEOUT(_prAdapter, _prWakeLock, _u4Timeout) ({ \
 	u_int8_t state = 0; \
-	if (halIsHifStateReady(_prAdapter, &state)) { \
+	if (_prWakeLock && halIsHifStateReady(_prAdapter, &state)) { \
 		wake_lock_timeout(_prWakeLock, _u4Timeout); \
 	} \
 })
 
-#define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock) \
-	wake_unlock(_prWakeLock)
+#define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock) ({\
+	if (_prWakeLock) {\
+		wake_unlock(_prWakeLock); \
+	} \
+})
 
 #define KAL_WAKE_LOCK_ACTIVE(_prAdapter, _prWakeLock) \
-	wake_lock_active(_prWakeLock)
+	(_prWakeLock && wake_lock_active(_prWakeLock))
 #endif
 
 #else
@@ -666,6 +780,10 @@ static inline void kalCfg80211ScanDone(struct cfg80211_scan_request *request,
 #define KAL_WAKE_UNLOCK(_prAdapter, _prWakeLock)
 #define KAL_WAKE_LOCK_ACTIVE(_prAdapter, _prWakeLock)
 #endif
+
+
+#define KAL_GFP_FLAG() \
+	(in_interrupt()?GFP_ATOMIC:GFP_KERNEL)
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -987,6 +1105,25 @@ do { \
 }
 #endif
 
+#if KERNEL_VERSION(5, 6, 0) <= LINUX_VERSION_CODE
+#define DEFINE_PROC_OPS_STRUCT(_n_)  const struct proc_ops _n_
+#define DEFINE_PROC_OPS_OWNER(_n_)
+#define DEFINE_PROC_OPS_WRITE(_n_)   .proc_write = _n_,
+#define DEFINE_PROC_OPS_READ(_n_)    .proc_read  = _n_,
+#define DEFINE_PROC_OPS_POLL(_n_)    .proc_poll  = _n_,
+#define DEFINE_PROC_OPS_OPEN(_n_)    .proc_open  = _n_,
+#define DEFINE_PROC_OPS_LSEEK(_n_)   .proc_lseek  = _n_,
+#define DEFINE_PROC_OPS_RELEASE(_n_) .proc_release  = _n_,
+#else
+#define DEFINE_PROC_OPS_STRUCT(_n_)  const struct file_operations _n_
+#define DEFINE_PROC_OPS_OWNER(_n_)   .owner = _n_,
+#define DEFINE_PROC_OPS_WRITE(_n_)   .write = _n_,
+#define DEFINE_PROC_OPS_READ(_n_)    .read = _n_,
+#define DEFINE_PROC_OPS_POLL(_n_)    .poll  = _n_,
+#define DEFINE_PROC_OPS_OPEN(_n_)    .open  = _n_,
+#define DEFINE_PROC_OPS_LSEEK(_n_)   .llseek  = _n_,
+#define DEFINE_PROC_OPS_RELEASE(_n_) .release  = _n_,
+#endif
 /*******************************************************************************
  *                  F U N C T I O N   D E C L A R A T I O N S
  *******************************************************************************
@@ -1422,6 +1559,13 @@ kalIndicateBssInfo(IN struct GLUE_INFO *prGlueInfo,
 /*----------------------------------------------------------------------------*/
 /* Net device                                                                 */
 /*----------------------------------------------------------------------------*/
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+uint32_t
+kalSwTsoXmit(struct sk_buff **pprOrgSkb,
+		 IN struct net_device *prDev, struct GLUE_INFO *prGlueInfo,
+		 uint8_t ucBssIndex);
+#endif
+
 uint32_t
 kalHardStartXmit(struct sk_buff *prSkb,
 		 IN struct net_device *prDev,
@@ -1537,21 +1681,29 @@ void kalIndicateTxDisassocToUpperLayer(struct net_device *prDevHandler,
 void kalWowInit(IN struct GLUE_INFO *prGlueInfo);
 void kalWowProcess(IN struct GLUE_INFO *prGlueInfo,
 		   uint8_t enable);
-void kalInitMdnsCache(void);
-void kalShowMdnsCache(void);
-uint8_t kalAddMdnsCache(struct MDNS_RESP_INFO_T *resp);
-void kalDelMdnsCache(struct MDNS_RESP_INFO_T *respInfo);
-void kalSendAddMdnsCacheToFw(struct GLUE_INFO *prGlueInfo);
-void kalSendDelMdnsCacheToFw(struct GLUE_INFO *prGlueInfo);
+#if CFG_SUPPORT_MDNS_OFFLOAD
+void kalMdnsProcess(IN struct GLUE_INFO *prGlueInfo,
+		IN struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+void kalMdnsOffloadInit(IN struct ADAPTER *prAdapter);
+struct MDNS_PARAM_ENTRY_T *mdnsAllocateParamEntry(IN struct ADAPTER *prAdapter);
+void kalSendClearRecordToFw(struct GLUE_INFO *prGlueInfo);
+void kalSendMdnsRecordToFw(struct GLUE_INFO *prGlueInfo);
 void kalSendMdnsEnableToFw(struct GLUE_INFO *prGlueInfo);
-void kalSendMdnsDisableToFw(struct GLUE_INFO *prGlueInfo);
-bool kalParseMdnsRespPkt(uint8_t *pucMdnsHdr,
-				struct MDNS_RESP_INFO_T *resp);
+void kalAddMdnsRecord(struct GLUE_INFO *prGlueInfo,
+		struct MDNS_INFO_UPLAYER_T *prMdnsUplayerInfo);
+void kalShowMdnsRecord(struct GLUE_INFO *prGlueInfo);
+#if CFG_SUPPORT_MDNS_OFFLOAD_GVA
+void kalProcessMdnsRespPkt(struct GLUE_INFO *prGlueInfo, uint8_t *pucMdnsHdr);
+#endif
+#endif
 #endif
 
 int main_thread(void *data);
 
 #if CFG_SUPPORT_MULTITHREAD
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+int sdio_rx_DeAgg_thread(void *data);
+#endif
 int hif_thread(void *data);
 int rx_thread(void *data);
 #endif
@@ -1587,6 +1739,10 @@ void kalPerMonHandler(IN struct ADAPTER *prAdapter,
 uint32_t kalPerMonGetInfo(IN struct ADAPTER *prAdapter,
 			  IN uint8_t *pucBuf,
 			  IN uint32_t u4Max);
+uint32_t kalGetTpMbps(struct ADAPTER *prAdapter, uint8_t ucPath,
+	uint8_t ucBssIdx);
+uint8_t kalIsTputMode(struct ADAPTER *prAdapter, uint8_t ucPath,
+	uint8_t ucBssIdx);
 int32_t kalBoostCpu(IN struct ADAPTER *prAdapter,
 		    IN uint32_t u4TarPerfLevel,
 		    IN uint32_t u4BoostCpuTh);
@@ -1645,6 +1801,27 @@ uint8_t kalRxNapiValidSkb(struct GLUE_INFO *prGlueInfo,
 	struct sk_buff *prSkb);
 int kalRxNapiPoll(struct napi_struct *napi, int budget);
 
+void kal_Set_Thread_SchPolicy_Priority(IN struct GLUE_INFO *prGlueInfo);
+
 unsigned long kal_kallsyms_lookup_name(const char *name);
 
+void kal_sched_set(struct task_struct *p, int policy,
+		const struct sched_param *param,
+		int nice);
+
+#ifndef __has_attribute
+#define __has_attribute(x) 0
+#endif
+
+#define GCC_VERSION_AT_LEAST(major, minor) (__GNUC__ > (major) || \
+		((__GNUC__ == (major)) && __GNUC_MINOR__ >= (minor)))
+
+/* clone 'fallthrough' in include/linux/compiler_attributes.h */
+#if GCC_VERSION_AT_LEAST(7, 0) && __has_attribute(__fallthrough__)
+#define kal_fallthrough __attribute__((__fallthrough__))
+#else
+#define kal_fallthrough do {} while (0)  /* fallthrough */
+#endif
+
 #endif				/* _GL_KAL_H */
+

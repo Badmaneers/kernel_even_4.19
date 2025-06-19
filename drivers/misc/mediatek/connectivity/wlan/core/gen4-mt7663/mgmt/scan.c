@@ -923,14 +923,9 @@ scanSearchExistingBssDescWithSsid(IN struct ADAPTER *prAdapter,
 	switch (eBSSType) {
 	case BSS_TYPE_P2P_DEVICE:
 		fgCheckSsid = FALSE;
-		/* fall through */
-		/* FALLTHRU */
+		kal_fallthrough;
 	case BSS_TYPE_INFRASTRUCTURE:
-#if CFG_SUPPORT_ROAMING_SKIP_ONE_AP
-		scanSearchBssDescOfRoamSsid(prAdapter);
-		/* fall through */
-#endif
-		/* FALLTHRU */
+		kal_fallthrough;
 	case BSS_TYPE_BOW_DEVICE:
 		prBssDesc = scanSearchBssDescByBssidAndSsid(prAdapter,
 			aucBSSID, fgCheckSsid, prSsid);
@@ -1484,6 +1479,56 @@ void scanRemoveConnFlagOfBssDescByBssid(IN struct ADAPTER *prAdapter,
 
 /*----------------------------------------------------------------------------*/
 /*!
+ * @brief Delete All BSS Descriptors from current list.*
+ * @param[in] prAdapter  Pointer to the Adapter structure.*
+ * @return (none)
+ */
+/*----------------------------------------------------------------------------*/
+void scanRemoveAllBssDesc(IN struct ADAPTER *prAdapter)
+{
+	struct SCAN_INFO *prScanInfo;
+	struct LINK *prBSSDescList;
+	struct LINK *prFreeBSSDescList;
+	struct BSS_DESC *prBssDesc = (struct BSS_DESC *) NULL;
+	struct BSS_DESC *prBSSDescNext;
+	/* Support AP Selection */
+	struct LINK *prEssList = NULL;
+
+	ASSERT(prAdapter);
+
+	prScanInfo = &(prAdapter->rWifiVar.rScanInfo);
+	prBSSDescList = &prScanInfo->rBSSDescList;
+	prFreeBSSDescList = &prScanInfo->rFreeBSSDescList;
+	/* Support AP Selection */
+	prEssList = &prAdapter->rWifiVar.rAisSpecificBssInfo.rCurEssLink;
+
+	/* Check if such BSS Descriptor exists in a valid list */
+	LINK_FOR_EACH_ENTRY_SAFE(prBssDesc, prBSSDescNext, prBSSDescList,
+		rLinkEntry, struct BSS_DESC) {
+
+		/* Support AP Selection */
+		if (!prBssDesc->prBlack)
+			aisQueryBlackList(prAdapter, prBssDesc);
+		if (prBssDesc->prBlack)
+			prBssDesc->prBlack->u4DisapperTime =
+			(uint32_t)kalGetBootTime();
+
+		/* Remove this BSS Desc from the BSS Desc list */
+		LINK_REMOVE_KNOWN_ENTRY(prBSSDescList, prBssDesc);
+
+		/* Remove this BSS Desc from the Ess Desc List */
+		if (LINK_ENTRY_IS_VALID(&prBssDesc->rLinkEntryEss))
+			LINK_REMOVE_KNOWN_ENTRY(prEssList,
+				&prBssDesc->rLinkEntryEss);
+
+		/* Return this BSS Desc to the free BSS Desc list. */
+		LINK_INSERT_TAIL(prFreeBSSDescList,
+			&prBssDesc->rLinkEntry);
+	}
+}
+
+/*----------------------------------------------------------------------------*/
+/*!
  * @brief Allocate new BSS_DESC structure
  *
  * @param[in] prAdapter          Pointer to the Adapter structure.
@@ -1854,6 +1899,12 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 			}
 
 			/* restore */
+			if (fgIsConnected) {
+				prAdapter->
+					rWifiVar.rAisFsmInfo.prTargetBssDesc =
+					prBssDesc;
+				DBGLOG(SCN, WARN, "Update prTargetBssDesc!\n");
+			}
 			prBssDesc->fgIsConnected = fgIsConnected;
 			prBssDesc->fgIsConnecting = fgIsConnecting;
 		}
@@ -2064,7 +2115,15 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 			struct IE_HT_CAP *prHtCap = (struct IE_HT_CAP *)pucIE;
 			uint8_t ucSpatial = 0;
 			uint8_t i = 0;
+
 			/* end Support AP Selection */
+			if (IE_LEN(pucIE) != (sizeof(struct IE_HT_CAP) - 2)) {
+				DBGLOG(SCN, WARN,
+					"HT_CAP wrong length(%d)->(%d)\n",
+					(sizeof(struct IE_HT_CAP) - 2),
+					IE_LEN(prHtCap));
+				break;
+			}
 
 			prBssDesc->fgIsHTPresent = TRUE;
 
@@ -2100,11 +2159,22 @@ struct BSS_DESC *scanAddToBssDesc(IN struct ADAPTER *prAdapter,
 			/* Support AP Selection*/
 			struct IE_VHT_CAP *prVhtCap =
 				(struct IE_VHT_CAP *)pucIE;
-			uint16_t u2TxMcsSet =
-				prVhtCap->rVhtSupportedMcsSet.u2TxMcsMap;
+			uint16_t u2TxMcsSet = 0;
 			uint8_t ucSpatial = 0;
 			uint8_t i = 0;
 			/* end Support AP Selection */
+
+			/* Error handling */
+			if (IE_LEN(prVhtCap) !=
+				(sizeof(struct IE_VHT_CAP) - 2)) {
+				DBGLOG(SCN, WARN,
+					"VhtCap wrong length!(%d)->(%d)\n",
+					(sizeof(struct IE_VHT_CAP) - 2),
+					IE_LEN(prVhtCap));
+				break;
+			}
+
+			u2TxMcsSet = prVhtCap->rVhtSupportedMcsSet.u2TxMcsMap;
 			prBssDesc->fgIsVHTPresent = TRUE;
 #if CFG_SUPPORT_BFEE
 #define __LOCAL_VAR__ \
@@ -2163,6 +2233,15 @@ VHT_CAP_INFO_NUMBER_OF_SOUNDING_DIMENSIONS_OFFSET
 		{
 			struct IE_BSS_LOAD *prBssLoad =
 				(struct IE_BSS_LOAD *)pucIE;
+
+			if (IE_LEN(prBssLoad) !=
+				(sizeof(struct IE_BSS_LOAD) - 2)) {
+				DBGLOG(SCN, WARN,
+					"HE_CAP IE_LEN err(%d)->(%d)!\n",
+					(sizeof(struct IE_BSS_LOAD) - 2),
+					IE_LEN(prBssLoad));
+				break;
+			}
 
 			prBssDesc->u2StaCnt = prBssLoad->u2StaCnt;
 			prBssDesc->ucChnlUtilization =
@@ -2228,10 +2307,12 @@ VHT_CAP_INFO_NUMBER_OF_SOUNDING_DIMENSIONS_OFFSET
 		}
 		case ELEM_ID_RRM_ENABLED_CAP:
 			/* RRM Capability IE is always in length 5 bytes */
-			kalMemZero(prBssDesc->aucRrmCap,
-				   sizeof(prBssDesc->aucRrmCap));
-			kalMemCopy(prBssDesc->aucRrmCap, pucIE + 2,
-				   sizeof(prBssDesc->aucRrmCap));
+			if (IE_LEN(pucIE) == 5) {
+				kalMemZero(prBssDesc->aucRrmCap,
+					   sizeof(prBssDesc->aucRrmCap));
+				kalMemCopy(prBssDesc->aucRrmCap, pucIE + 2,
+					   sizeof(prBssDesc->aucRrmCap));
+			}
 			break;
 			/* no default */
 		}
@@ -2365,7 +2446,8 @@ VHT_CAP_INFO_NUMBER_OF_SOUNDING_DIMENSIONS_OFFSET
 		prBssDesc->eSco = CHNL_EXT_SCN;
 	}
 #if CFG_SUPPORT_802_11K
-	if (prCountryIE) {
+	if (prCountryIE && prCountryIE->ucLength ==
+		(sizeof(struct IE_COUNTRY) - 2)) {
 		uint8_t ucRemainLen = prCountryIE->ucLength - 3;
 		struct COUNTRY_INFO_SUBBAND_TRIPLET *prSubBand =
 			&prCountryIE->arCountryStr[0];
@@ -2412,11 +2494,13 @@ VHT_CAP_INFO_NUMBER_OF_SOUNDING_DIMENSIONS_OFFSET
 								    0, 0);
 				}
 			}
-		} else if (prBssDesc->cPowerLimit != RLM_INVALID_POWER_LIMIT) {
+		} else if (prBssDesc->cPowerLimit != RLM_INVALID_POWER_LIMIT
+			&& prBssDesc->fgIsConnected) {
 			prBssDesc->cPowerLimit = RLM_INVALID_POWER_LIMIT;
 			rlmSetMaxTxPwrLimit(prAdapter, 0, 0);
 		}
-	} else if (prBssDesc->cPowerLimit != RLM_INVALID_POWER_LIMIT) {
+	} else if (prBssDesc->cPowerLimit != RLM_INVALID_POWER_LIMIT
+		&& prBssDesc->fgIsConnected) {
 		prBssDesc->cPowerLimit = RLM_INVALID_POWER_LIMIT;
 		rlmSetMaxTxPwrLimit(prAdapter, 0, 0);
 	}

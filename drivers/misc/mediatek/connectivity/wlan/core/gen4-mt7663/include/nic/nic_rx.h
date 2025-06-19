@@ -148,9 +148,11 @@
 /* DW 1 */
 /* Byte 0 */
 #define RX_STATUS_HTC                   BIT(0)
-#define RX_STATUS_UC2ME                 BIT(1)
-#define RX_STATUS_MC_FRAME              BIT(2)
-#define RX_STATUS_BC_FRAME              BIT(3)
+#define RX_STATUS_UC2ME                 1
+#define RX_STATUS_MC_FRAME              2
+#define RX_STATUS_BC_FRAME              3
+#define RX_STATUS_A1_TYPE_MASK          BITS(1, 2)
+#define RX_STATUS_A1_TYPE_OFFSET        1
 #define RX_STATUS_BCN_WITH_BMC          BIT(4)
 #define RX_STATUS_BCN_WITH_UC           BIT(5)
 #define RX_STATUS_KEYID_MASK            BITS(6, 7)
@@ -721,6 +723,7 @@ struct SW_RFB {
 	void *pvHeader;
 	uint16_t u2PacketLen;
 	uint16_t u2HeaderLen;
+	uint8_t ucHeaderOffset;
 
 	uint8_t *pucPayload;
 	uint16_t u2PayloadLength;
@@ -728,6 +731,8 @@ struct SW_RFB {
 	struct STA_RECORD *prStaRec;
 
 	uint8_t ucPacketType;
+	uint8_t ucPayloadFormat;
+	uint8_t ucSecMode;
 
 	/* rx sta record */
 	uint8_t ucWlanIdx;
@@ -736,6 +741,9 @@ struct SW_RFB {
 	u_int8_t fgReorderBuffer;
 	u_int8_t fgDataFrame;
 	u_int8_t fgFragFrame;
+	uint8_t fgHdrTran;
+	uint8_t fgIsBC;
+	uint8_t fgIsMC;
 	/* duplicate detection */
 	uint16_t u2FrameCtrl;
 	uint16_t u2SequenceControl;
@@ -835,6 +843,11 @@ struct EMU_MAC_RATE_INFO {
 	uint32_t u4PhyRate[4][2];
 };
 
+struct ACTION_FRAME_SIZE_MAP {
+	uint16_t u2Index; /* High byte for Action, low byte for Category */
+	size_t len;
+};
+
 /*******************************************************************************
  *                           P R I V A T E   D A T A
  *******************************************************************************
@@ -895,13 +908,15 @@ struct EMU_MAC_RATE_INFO {
 /* DW 1 */
 #define HAL_RX_STATUS_IS_HTC_EXIST(_prHwMacRxDesc) \
 	(((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_HTC)?TRUE:FALSE)
-#define HAL_RX_STATUS_IS_UC2ME(_prHwMacRxDesc) \
-	(((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_UC2ME) \
-	? TRUE : FALSE)
-#define HAL_RX_STATUS_IS_MC(_prHwMacRxDesc) \
-	(((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_MC_FRAME)?TRUE:FALSE)
-#define HAL_RX_STATUS_IS_BC(_prHwMacRxDesc) \
-	(((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_BC_FRAME)?TRUE:FALSE)
+#define HAL_RX_STATUS_IS_U2ME(_prHwMacRxDesc)  \
+	((((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_A1_TYPE_MASK)  \
+		>> RX_STATUS_A1_TYPE_OFFSET == RX_STATUS_UC2ME) ? TRUE:FALSE)
+#define HAL_RX_STATUS_IS_MC(_prHwMacRxDesc)  \
+	((((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_A1_TYPE_MASK)  \
+		>> RX_STATUS_A1_TYPE_OFFSET == RX_STATUS_MC_FRAME) ? TRUE:FALSE)
+#define HAL_RX_STATUS_IS_BC(_prHwMacRxDesc)  \
+	((((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_A1_TYPE_MASK)  \
+		>> RX_STATUS_A1_TYPE_OFFSET == RX_STATUS_BC_FRAME) ? TRUE:FALSE)
 #define HAL_RX_STATUS_IS_BCN_WITH_BMC(_prHwMacRxDesc)	\
 	(((_prHwMacRxDesc)->ucMatchPacket & RX_STATUS_BCN_WITH_BMC)?TRUE:FALSE)
 #define HAL_RX_STATUS_IS_BCN_WITH_UC(_prHwMacRxDesc)	\
@@ -1110,6 +1125,17 @@ struct EMU_MAC_RATE_INFO {
 #define RXM_IS_DATA_FRAME(_u2FrameCtrl) \
 	(((_u2FrameCtrl & MASK_FC_TYPE) == MAC_FRAME_TYPE_DATA) ? TRUE : FALSE)
 
+#define RXM_IS_TO_DS(_u2FrameCtrl) \
+	(((_u2FrameCtrl & MASK_TO_DS_FROM_DS) == MASK_FC_TO_DS) ? TRUE : FALSE)
+
+#define RXM_IS_FROM_DS(_u2FrameCtrl) \
+	(((_u2FrameCtrl & MASK_TO_DS_FROM_DS) == MASK_FC_FROM_DS) ? \
+	TRUE : FALSE)
+
+#define RXM_IS_MORE_DATA(_u2FrameCtrl) \
+	(((_u2FrameCtrl & MASK_FC_MORE_DATA) == MASK_FC_MORE_DATA) ? \
+	TRUE : FALSE)
+
 /*******************************************************************************
  *                   F U N C T I O N   D E C L A R A T I O N S
  *******************************************************************************
@@ -1141,6 +1167,9 @@ void nicRxProcessGOBroadcastPkt(IN struct ADAPTER *prAdapter,
 
 bool nicRxFillRFB(IN struct ADAPTER *prAdapter,
 	IN OUT struct SW_RFB *prSwRfb);
+
+void nicRxClearFrag(IN struct ADAPTER *prAdapter,
+	IN struct STA_RECORD *prStaRec);
 
 struct SW_RFB *nicRxDefragMPDU(IN struct ADAPTER *prAdapter,
 	IN struct SW_RFB *prSWRfb, OUT struct QUE *prReturnedQue);

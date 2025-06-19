@@ -117,7 +117,8 @@ static const struct iw_priv_args rIwPrivTable[] = {
 	{IOCTL_SET_INT, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 3, 0, ""},
 	{IOCTL_GET_INT, 0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 3, ""},
 	{IOCTL_SET_INT, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 2, 0, ""},
-
+	/* fos_change online */
+	{IOCTL_GET_STR, 0, IW_PRIV_TYPE_CHAR | 2000, ""},
 	{
 		IOCTL_GET_INT, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 2,
 		IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1, ""
@@ -134,8 +135,8 @@ static const struct iw_priv_args rIwPrivTable[] = {
 	{IOCTL_SET_STRUCT, 256, 0, ""},
 	{IOCTL_GET_STRUCT, 0, 256, ""},
 
-	{IOCTL_GET_DRIVER, IW_PRIV_TYPE_CHAR | 2000, IW_PRIV_TYPE_CHAR |
-		2000, "driver"},
+	{IOCTL_GET_DRIVER, IW_PRIV_TYPE_CHAR | IW_PRIV_BUF_SIZE,
+		IW_PRIV_TYPE_CHAR | IW_PRIV_BUF_SIZE, "driver"},
 
 #if CFG_SUPPORT_QA_TOOL
 	/* added for ATE iwpriv Command */
@@ -151,6 +152,8 @@ static const struct iw_priv_args rIwPrivTable[] = {
 	 IW_PRIV_TYPE_CHAR | 1024, "AP_STA_DISASSOC"},
 	{IOC_AP_SET_NSS, IW_PRIV_TYPE_CHAR | 256,
 	 IW_PRIV_TYPE_CHAR | 1024, "AP_SET_NSS"},
+	{IOC_AP_SET_BW, IW_PRIV_TYPE_CHAR | 256,
+	 IW_PRIV_TYPE_CHAR | 1024, "AP_SET_BW"},
 
 	/* sub-ioctl definitions */
 #if 0
@@ -234,7 +237,23 @@ static const struct iw_priv_args rIwPrivTable[] = {
 		2, 0, "set_met_prof"},
 	{PRIV_CMD_SET_SER, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED |
 		1, 0, "set_ser"},
-
+/* fos_change begin */
+	{PRIV_CMD_CONNSTATUS, 0, IW_PRIV_TYPE_CHAR | 2000,
+	"connStatus"},
+#if CFG_SUPPORT_STAT_STATISTICS
+	{PRIV_CMD_STAT, 0, IW_PRIV_TYPE_CHAR | 2000,
+	"stat"},
+#endif
+#if CFG_SUPPORT_WAKEUP_STATISTICS
+	{PRIV_CMD_INT_STAT, 0, IW_PRIV_TYPE_CHAR | 2000,
+	"get_int_stat" },
+#endif
+#if CFG_SUPPORT_EXCEPTION_STATISTICS
+	{PRIV_CMD_EXCEPTION_STAT, 0, IW_PRIV_TYPE_CHAR | 2000,
+	"get_exp_stat" },
+#endif
+	{PRIV_CMD_SHOW_CHANNEL, 0, IW_PRIV_TYPE_INT | IW_PRIV_SIZE_FIXED | 1,
+	"show_Channel"},
 };
 
 static const iw_handler rIwPrivHandler[] = {
@@ -243,7 +262,7 @@ static const iw_handler rIwPrivHandler[] = {
 	[IOCTL_SET_ADDRESS - SIOCIWFIRSTPRIV] = NULL,
 	[IOCTL_GET_ADDRESS - SIOCIWFIRSTPRIV] = NULL,
 	[IOCTL_SET_STR - SIOCIWFIRSTPRIV] = NULL,
-	[IOCTL_GET_STR - SIOCIWFIRSTPRIV] = NULL,
+	[IOCTL_GET_STR - SIOCIWFIRSTPRIV] = priv_get_string,
 	[IOCTL_SET_KEY - SIOCIWFIRSTPRIV] = NULL,
 	[IOCTL_GET_KEY - SIOCIWFIRSTPRIV] = NULL,
 	[IOCTL_SET_STRUCT - SIOCIWFIRSTPRIV] = priv_set_struct,
@@ -252,11 +271,15 @@ static const iw_handler rIwPrivHandler[] = {
 	[IOCTL_SET_INTS - SIOCIWFIRSTPRIV] = priv_set_ints,
 	[IOCTL_GET_INTS - SIOCIWFIRSTPRIV] = priv_get_ints,
 	[IOCTL_GET_DRIVER - SIOCIWFIRSTPRIV] = priv_set_driver,
+#if CFG_SUPPORT_NAN
+	[IOCTL_NAN_STRUCT - SIOCIWFIRSTPRIV] = priv_nan_struct,
+#endif
 	[IOC_AP_GET_STA_LIST - SIOCIWFIRSTPRIV] = priv_set_ap,
 	[IOC_AP_SET_MAC_FLTR - SIOCIWFIRSTPRIV] = priv_set_ap,
 	[IOC_AP_SET_CFG - SIOCIWFIRSTPRIV] = priv_set_ap,
 	[IOC_AP_STA_DISASSOC - SIOCIWFIRSTPRIV] = priv_set_ap,
 	[IOC_AP_SET_NSS - SIOCIWFIRSTPRIV] = priv_set_ap,
+	[IOC_AP_SET_BW - SIOCIWFIRSTPRIV] = priv_set_ap,
 #if CFG_SUPPORT_QA_TOOL
 	[IOCTL_QA_TOOL_DAEMON - SIOCIWFIRSTPRIV] = priv_qa_agent,
 	[IOCTL_IWPRIV_ATE - SIOCIWFIRSTPRIV] = priv_ate_set
@@ -1096,7 +1119,7 @@ wext_get_name(IN struct net_device *prNetDev,
 	      IN struct iw_request_info *prIwrInfo,
 	      OUT char *pcName, IN uint32_t pcNameSize, IN char *pcExtra)
 {
-	enum ENUM_PARAM_NETWORK_TYPE eNetWorkType;
+	enum ENUM_PARAM_NETWORK_TYPE eNetWorkType = PARAM_NETWORK_TYPE_NUM;
 
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
@@ -1355,7 +1378,7 @@ wext_get_mode(IN struct net_device *prNetDev,
 	      IN struct iw_request_info *prIwReqInfo,
 	      OUT unsigned int *pu4Mode, IN char *pcExtra)
 {
-	enum ENUM_PARAM_OP_MODE eOpMode;
+	enum ENUM_PARAM_OP_MODE eOpMode = NET_TYPE_NUM;
 
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
@@ -1688,7 +1711,7 @@ wext_set_scan(IN struct net_device *prNetDev,
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
 	uint32_t u4BufLen = 0;
-	int essid_len = 0;
+	uint8_t essid_len = 0;
 
 	ASSERT(prNetDev);
 	if (GLUE_CHK_DEV(prNetDev) == FALSE)
@@ -1697,9 +1720,12 @@ wext_set_scan(IN struct net_device *prNetDev,
 
 #if WIRELESS_EXT > 17
 	/* retrieve SSID */
-	if (prData)
+	if (prData) {
 		essid_len = ((struct iw_scan_req *)(((struct iw_point *)
 					     prData)->pointer))->essid_len;
+		if (essid_len > ELEM_MAX_LEN_SSID)
+			essid_len = ELEM_MAX_LEN_SSID;
+	}
 #endif
 
 	init_completion(&prGlueInfo->rScanComp);
@@ -1813,6 +1839,12 @@ wext_get_scan(IN struct net_device *prNetDev,
 	pcEnd = pcExtra + prData->length;	/* end of extra buffer */
 
 	/* Allocate another query buffer with the same size of extra buffer */
+	if (prData->length == 0) {
+		DBGLOG(INIT, INFO, "[wifi] buffer size is %d for scan list\n",
+		       prData->length);
+		ret = -E2BIG;
+		goto error;
+	}
 	u4AllocBufLen = prData->length;
 	prList = kalMemAlloc(u4AllocBufLen, VIR_MEM_TYPE);
 	if (prList == NULL) {
@@ -2577,14 +2609,19 @@ wext_get_rate(IN struct net_device *prNetDev,
 	if (ucBssIndex >= BSSID_NUM)
 		return -EFAULT;
 
+	memset(&rLinkSpeed, 0, sizeof(rLinkSpeed));
+	DBGLOG(REQ, TRACE, "Call &rLinkSpeed=%p, sizeof=%zu, &u4BufLen=%p",
+		&rLinkSpeed, sizeof(rLinkSpeed), &u4BufLen);
 	rStatus = kalIoctlByBssIdx(prGlueInfo, wlanoidQueryLinkSpeedEx,
 			   &rLinkSpeed, sizeof(rLinkSpeed),
 			   TRUE, FALSE, FALSE,
 			   &u4BufLen, ucBssIndex);
+	DBGLOG(REQ, TRACE, "rStatus=%u, prGlueInfo=%p, u4BufLen=%u",
+		rStatus, prGlueInfo, u4BufLen);
 
 	if (rStatus != WLAN_STATUS_SUCCESS)
 		return -EFAULT;
-	u4Rate = rLinkSpeed.rLq[ucBssIndex].u2LinkSpeed;
+	u4Rate = rLinkSpeed.rLq[ucBssIndex].u2TxLinkSpeed;
 	/* u4Rate is in unit of 100bps */
 	prRate->value = u4Rate * 100;
 	prRate->fixed = 0;
@@ -2662,7 +2699,7 @@ wext_get_rts(IN struct net_device *prNetDev,
 	     IN struct iw_request_info *prIwrInfo,
 	     OUT struct iw_param *prRts, IN char *pcExtra)
 {
-	uint32_t u4RtsThresh;
+	uint32_t u4RtsThresh = 0;
 
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
@@ -2844,7 +2881,7 @@ wext_get_encode(IN struct net_device *prNetDev,
 {
 #if 1
 	/* ENUM_ENCRYPTION_STATUS_T eEncMode; */
-	enum ENUM_WEP_STATUS eEncMode;
+	enum ENUM_WEP_STATUS eEncMode = ENUM_ENCRYPTION_NUM;
 
 	struct GLUE_INFO *prGlueInfo = NULL;
 	uint32_t rStatus = WLAN_STATUS_SUCCESS;
@@ -3935,8 +3972,7 @@ int wext_support_ioctl(IN struct net_device *prDev,
 				ret = -ENOMEM;
 				break;
 			}
-
-			if (copy_from_user(prExtraBuf, &iw.essid,
+			if (kalMemCopy(prExtraBuf, &iw.essid,
 			    iw.essid_len)) {
 				ret = -EFAULT;
 			} else {
@@ -4550,11 +4586,13 @@ wext_indicate_wext_event(IN struct GLUE_INFO *prGlueInfo,
 				(struct PARAM_PMKID_CANDIDATE *) pucData;
 
 			struct iw_pmkid_cand rPmkidCand;
+			memset(&rPmkidCand, 0, sizeof(rPmkidCand));
 
 			pucExtraInfo = aucExtraInfoBuf;
 
 			rPmkidCand.flags = prPmkidCand->u4Flags;
 			rPmkidCand.index = 0;
+			rPmkidCand.bssid.sa_family = AF_UNSPEC;
 			kalMemCopy(rPmkidCand.bssid.sa_data,
 				   prPmkidCand->arBSSID, 6);
 
@@ -4638,6 +4676,7 @@ struct iw_statistics *wext_get_wireless_stats(
 		goto stat_out;
 	}
 
+	memset(&rLinkSpeed, 0, sizeof(rLinkSpeed));
 	rStatus = kalIoctlByBssIdx(prGlueInfo,
 				   wlanoidQueryRssi,
 				   &rLinkSpeed, sizeof(rLinkSpeed),

@@ -1044,10 +1044,10 @@ enum ENUM_ANTENNA_NUM {
 #define MAX_NUM_SUPPORTED_CIPHER_SUITES 9
 #if CFG_SUPPORT_802_11W
 /* max number of supported AKM suites */
-#define MAX_NUM_SUPPORTED_AKM_SUITES    11
+#define MAX_NUM_SUPPORTED_AKM_SUITES    12
 #else
 /* max number of supported AKM suites */
-#define MAX_NUM_SUPPORTED_AKM_SUITES    9
+#define MAX_NUM_SUPPORTED_AKM_SUITES    10
 #endif
 #endif
 /* max number of supported PMKID */
@@ -1132,6 +1132,12 @@ struct OWE_INFO_T {
 	uint8_t aucPublicKey[100];
 };
 #endif
+
+struct RSNXE {
+	uint8_t ucElemId;
+	uint8_t ucLength;
+	uint8_t aucPublicKey[0];
+} __KAL_ATTRIB_PACKED__;
 
 /*******************************************************************************
  *                            P U B L I C   D A T A

@@ -261,6 +261,8 @@ static INT32 wmt_plat_assert_ctrl(VOID)
 {
 	INT32 ret = 0;
 
+	mtk_wcn_consys_ipi_timeout_dump();
+
 	if (wmt_plat_trigger_assert_cb)
 		ret = (*wmt_plat_trigger_assert_cb)(WMTDRV_TYPE_WMT, 45);
 
@@ -297,10 +299,11 @@ static VOID wmt_plat_bgf_eirq_cb(VOID)
 irqreturn_t wmt_plat_bgf_irq_isr(INT32 irq, PVOID arg)
 {
 #if CFG_WMT_PS_SUPPORT
+	mtk_wcn_consys_wakeup_btif_irq_pull_low();
 	wmt_plat_eirq_ctrl(PIN_BGF_EINT, PIN_STA_EINT_DIS);
 	wmt_plat_bgf_eirq_cb();
 #else
-	WMT_PLAT_PR_DBG("skip irq handing because psm is disable");
+	WMT_PLAT_PR_INFO("skip irq handing because psm is disable");
 #endif
 
 	return IRQ_HANDLED;
@@ -378,9 +381,7 @@ INT32 wmt_plat_init(P_PWR_SEQ_TIME pPwrSeqTime, UINT32 co_clock_type)
 	osal_sleepable_lock_init(&gOsSLock);
 
 	/* init hw */
-	if (wmt_detect_get_chip_type() == WMT_CHIP_TYPE_SOC)
-		iret += mtk_wcn_consys_hw_init();
-	else
+	if (wmt_detect_get_chip_type() != WMT_CHIP_TYPE_SOC)
 		iret += mtk_wcn_cmb_hw_init(pPwrSeqTime);
 
 	spin_lock_init(&g_bgf_irq_lock.lock);
@@ -1668,7 +1669,7 @@ VOID wmt_plat_BGF_irq_dump_status(VOID)
 {
 	mt_irq_dump_status(269);/*tag3 wujun rainier is enabled */
 
-	WMT_PLAT_PR_DBG("this function is null in MT6735\n");
+	WMT_PLAT_PR_INFO("this function is null in MT6735\n");
 }
 
 MTK_WCN_BOOL wmt_plat_dump_BGF_irq_status(VOID)
@@ -1726,7 +1727,7 @@ UINT32 wmt_plat_force_trigger_assert(ENUM_FORCE_TRG_ASSERT_T type)
 	switch (type) {
 	case STP_FORCE_TRG_ASSERT_EMI:
 
-		WMT_PLAT_PR_DBG("[Force Assert] stp_trigger_firmware_assert_via_emi -->\n");
+		WMT_PLAT_PR_INFO("[Force Assert] stp_trigger_firmware_assert_via_emi -->\n");
 		p_virtual_addr = wmt_plat_get_emi_virt_add(EXP_APMEM_CTRL_HOST_OUTBAND_ASSERT_W1);
 		if (!p_virtual_addr) {
 			WMT_PLAT_PR_ERR("get virtual address fail\n");
@@ -1734,7 +1735,7 @@ UINT32 wmt_plat_force_trigger_assert(ENUM_FORCE_TRG_ASSERT_T type)
 		}
 
 		CONSYS_REG_WRITE(p_virtual_addr, EXP_APMEM_HOST_OUTBAND_ASSERT_MAGIC_W1);
-		WMT_PLAT_PR_DBG("[Force Assert] stp_trigger_firmware_assert_via_emi <--\n");
+		WMT_PLAT_PR_INFO("[Force Assert] stp_trigger_firmware_assert_via_emi <--\n");
 		break;
 	case STP_FORCE_TRG_ASSERT_DEBUG_PIN:
 		mtk_wcn_force_trigger_assert_debug_pin();
@@ -1805,10 +1806,19 @@ INT32 wmt_plat_get_adie_chipid(VOID)
 	return mtk_wcn_consys_detect_adie_chipid(gCoClockFlag);
 }
 
+INT32 wmt_plat_consys_hw_init(VOID)
+{
+#ifndef MTK_WCN_COMBO_CHIP_SUPPORT
+	return mtk_wcn_consys_hw_init();
+#else
+	return 0;
+#endif
+}
+
 #if CFG_WMT_LTE_COEX_HANDLING
 INT32 wmt_plat_get_tdm_antsel_index(VOID)
 {
-	WMT_PLAT_PR_DBG("not support LTE in this platform\n");
+	WMT_PLAT_PR_INFO("not support LTE in this platform\n");
 	return 0;
 }
 #endif
@@ -1830,7 +1840,7 @@ INT32 wmt_plat_set_dbg_mode(UINT32 flag)
 		CONSYS_REG_WRITE(vir_addr, 0x0);
 		ret = 1;
 	}
-	WMT_PLAT_PR_DBG("fw dbg mode register value(0x%08x)\n", CONSYS_REG_READ(vir_addr));
+	WMT_PLAT_PR_INFO("fw dbg mode register value(0x%08x)\n", CONSYS_REG_READ(vir_addr));
 
 	return ret;
 }
@@ -1845,7 +1855,7 @@ INT32 wmt_plat_set_dynamic_dumpmem(PUINT32 str_buf)
 		return -1;
 	}
 	memcpy(vir_addr, str_buf, DYNAMIC_DUMP_GROUP_NUM*8);
-	WMT_PLAT_PR_DBG("dynamic dump register value(0x%08x)\n", CONSYS_REG_READ(vir_addr));
+	WMT_PLAT_PR_INFO("dynamic dump register value(0x%08x)\n", CONSYS_REG_READ(vir_addr));
 
 	return 0;
 }

@@ -442,7 +442,7 @@ void sysCreateSoftap(void)
 
 	ucOffset += kalSnprintf(acSoftAPInfo + ucOffset
 		, MTK_INFO_MAX_SIZE - ucOffset
-		, "DualInterface=%s\n", "yes");
+		, "DualInterface=%s\n", "no");
 }
 
 void sysInitSoftap(void)

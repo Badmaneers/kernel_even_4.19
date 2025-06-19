@@ -220,7 +220,6 @@ struct AIS_FSM_INFO {
 
 	u_int8_t fgIsScanning;
 
-	u_int8_t fgIsInfraChannelFinished;
 	u_int8_t fgIsChannelRequested;
 	u_int8_t fgIsChannelGranted;
 
@@ -584,10 +583,12 @@ uint16_t aisCalculateBlackListScore(struct ADAPTER *prAdapter,
 /* end Support AP Selection */
 
 /* Support 11K */
+#if CFG_SUPPORT_802_11K
 void aisResetNeighborApList(struct ADAPTER *prAdapter);
 void aisCollectNeighborAP(struct ADAPTER *prAdapter, uint8_t *pucApBuf,
 			  uint16_t u2ApBufLen, uint8_t ucValidInterval);
 void aisSendNeighborRequest(struct ADAPTER *prAdapter);
+#endif
 /* end Support 11K */
 
 void aisPreSuspendFlow(IN struct GLUE_INFO *prGlueInfo);

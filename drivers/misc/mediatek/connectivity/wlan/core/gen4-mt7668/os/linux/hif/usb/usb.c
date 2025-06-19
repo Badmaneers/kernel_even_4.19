@@ -80,6 +80,10 @@
 #ifndef CONFIG_X86
 #include <asm/memory.h>
 #endif
+#include <linux/of.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
+#include <linux/of_gpio.h>
 
 #include "mt66xx_reg.h"
 #include "cust_usb_id.h"
@@ -176,6 +180,10 @@ static int mtk_usb_bulk_in_msg(IN P_GL_HIF_INFO_T prHifInfo, IN UINT_32 len, OUT
 static int mtk_usb_intr_in_msg(IN P_GL_HIF_INFO_T prHifInfo, IN UINT_32 len, OUT UCHAR * buffer, int InEp);
 static int mtk_usb_bulk_out_msg(IN P_GL_HIF_INFO_T prHifInfo, IN UINT_32 len, IN UCHAR * buffer, int OutEp);
 
+#if CFG_DROP_NOT_MY_BSSID
+static void mtk_drop_not_my_bssid(IN P_ADAPTER_T prAdapter, IN BOOL enable);
+#endif
+
 /*******************************************************************************
 *                              F U N C T I O N S
 ********************************************************************************
@@ -212,7 +220,6 @@ static int mtk_usb_probe(struct usb_interface *intf, const struct usb_device_id 
 
 	DBGLOG(HAL, EVENT, "wlan_probe()\n");
 	if (pfWlanProbe((PVOID) intf, (PVOID) id->driver_info) != WLAN_STATUS_SUCCESS) {
-		/* printk(KERN_WARNING DRV_NAME"pfWlanProbe fail!call pfWlanRemove()\n"); */
 		pfWlanRemove();
 		DBGLOG(HAL, ERROR, "wlan_probe() failed\n");
 		ret = -1;
@@ -235,6 +242,7 @@ static int mtk_usb_probe(struct usb_interface *intf, const struct usb_device_id 
 static void mtk_usb_disconnect(struct usb_interface *intf)
 {
 	P_GLUE_INFO_T prGlueInfo;
+	int i = 0;
 
 	DBGLOG(HAL, STATE, "mtk_usb_disconnect()\n");
 
@@ -250,6 +258,22 @@ static void mtk_usb_disconnect(struct usb_interface *intf)
 
 	usb_put_dev(interface_to_usbdev(intf));
 
+	for (i = 1; i < KAL_P2P_NUM; i++) {
+
+		if (gprP2pRoleWdev[i] == NULL)
+			continue;
+
+		DBGLOG(INIT, STATE,
+			"glP2pDestroyWirelessDevice[%d] (0x%p)\n",
+					i, gprP2pRoleWdev[i]->wiphy);
+		set_wiphy_dev(gprP2pRoleWdev[i]->wiphy, NULL);
+		wiphy_unregister(gprP2pRoleWdev[i]->wiphy);
+		wiphy_free(gprP2pRoleWdev[i]->wiphy);
+		kfree(gprP2pRoleWdev[i]);
+
+		gprP2pRoleWdev[i] = NULL;
+	}
+
 	DBGLOG(HAL, STATE, "mtk_usb_disconnect() done\n");
 }
 
@@ -259,7 +283,7 @@ static int mtk_usb_suspend(struct usb_interface *intf, pm_message_t message)
 	ADAPTER_T *prAdapter;
 	P_AIS_FSM_INFO_T prAisFsmInfo = NULL;
 	UINT_8 count = 1;
-	UINT_8 ret = 0;
+	int ret = 0;
 
 	DBGLOG(HAL, STATE, "mtk_usb_suspend()\n");
 
@@ -290,6 +314,10 @@ static int mtk_usb_suspend(struct usb_interface *intf, pm_message_t message)
 
 	wlanSuspendPmHandle(prGlueInfo);
 
+#if CFG_DROP_NOT_MY_BSSID
+	mtk_drop_not_my_bssid(prGlueInfo->prAdapter, TRUE);
+#endif
+
 	halUSBPreSuspendCmd(prGlueInfo->prAdapter);
 
 	while (prGlueInfo->rHifInfo.state != USB_STATE_PRE_SUSPEND_DONE) {
@@ -306,6 +334,7 @@ static int mtk_usb_suspend(struct usb_interface *intf, pm_message_t message)
 	glUsbSetState(&prGlueInfo->rHifInfo, USB_STATE_SUSPEND);
 	halDisableInterrupt(prGlueInfo->prAdapter);
 	halTxCancelAllSending(prGlueInfo->prAdapter);
+	prGlueInfo->rHifInfo.DriverFWStat = USB_STATE_SUSPEND;
 
 	DBGLOG(HAL, STATE, "mtk_usb_suspend() done!\n");
 
@@ -342,6 +371,11 @@ static int mtk_usb_resume(struct usb_interface *intf)
 	halEnableInterrupt(prGlueInfo->prAdapter);
 
 	wlanResumePmHandle(prGlueInfo);
+	prGlueInfo->rHifInfo.DriverFWStat = USB_STATE_LINK_UP;
+
+#if CFG_DROP_NOT_MY_BSSID
+	mtk_drop_not_my_bssid(prGlueInfo->prAdapter, FALSE);
+#endif
 
 	DBGLOG(HAL, STATE, "mtk_usb_resume() done!\n");
 
@@ -395,7 +429,8 @@ int mtk_usb_vendor_request(IN P_GLUE_INFO_T prGlueInfo, IN UCHAR uEndpointAddres
 	}
 
 	if (unlikely(TransferBufferLength > prHifInfo->vendor_req_buf_sz)) {
-		DBGLOG(REQ, ERROR, "len %u exceeds limit %zu\n", TransferBufferLength,
+		DBGLOG(REQ, ERROR, "len %u exceeds limit %u\n",
+			TransferBufferLength,
 			prHifInfo->vendor_req_buf_sz);
 		return -E2BIG;
 	}
@@ -619,8 +654,9 @@ VOID glUnregisterBus(remove_card pfRemove)
 VOID glUdmaTxRxEnable(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 {
 	UINT_32 u4Value = 0;
+	BOOL ucRet;
 
-	kalDevRegRead(prGlueInfo, UDMA_WLCFG_0, &u4Value);
+	ucRet = kalDevRegRead(prGlueInfo, UDMA_WLCFG_0, &u4Value);
 
 	/* enable UDMA TX & RX */
 	if (enable)
@@ -628,15 +664,16 @@ VOID glUdmaTxRxEnable(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 	else
 		u4Value &= ~(UDMA_WLCFG_0_TX_EN(1) | UDMA_WLCFG_0_RX_EN(1));
 
-	kalDevRegWrite(prGlueInfo, UDMA_WLCFG_0, u4Value);
+	ucRet = kalDevRegWrite(prGlueInfo, UDMA_WLCFG_0, u4Value);
 }
 
 VOID glUdmaRxAggEnable(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 {
 	UINT_32 u4Value = 0;
+	BOOL ucRet;
 
 	if (enable) {
-		kalDevRegRead(prGlueInfo, UDMA_WLCFG_0, &u4Value);
+		ucRet = kalDevRegRead(prGlueInfo, UDMA_WLCFG_0, &u4Value);
 		/* enable UDMA TX & RX */
 		u4Value &= ~(UDMA_WLCFG_0_RX_AGG_EN_MASK |
 		    UDMA_WLCFG_0_RX_AGG_LMT_MASK |
@@ -644,16 +681,16 @@ VOID glUdmaRxAggEnable(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 		u4Value |= UDMA_WLCFG_0_RX_AGG_EN(1) |
 		    UDMA_WLCFG_0_RX_AGG_LMT(USB_RX_AGGREGTAION_LIMIT) |
 		    UDMA_WLCFG_0_RX_AGG_TO(USB_RX_AGGREGTAION_TIMEOUT);
-		kalDevRegWrite(prGlueInfo, UDMA_WLCFG_0, u4Value);
+		ucRet = kalDevRegWrite(prGlueInfo, UDMA_WLCFG_0, u4Value);
 
-		kalDevRegRead(prGlueInfo, UDMA_WLCFG_1, &u4Value);
+		ucRet = kalDevRegRead(prGlueInfo, UDMA_WLCFG_1, &u4Value);
 		u4Value &= ~UDMA_WLCFG_1_RX_AGG_PKT_LMT_MASK;
 		u4Value |= UDMA_WLCFG_1_RX_AGG_PKT_LMT(USB_RX_AGGREGTAION_PKT_LIMIT);
-		kalDevRegWrite(prGlueInfo, UDMA_WLCFG_1, u4Value);
+		ucRet = kalDevRegWrite(prGlueInfo, UDMA_WLCFG_1, u4Value);
 	} else {
-		kalDevRegRead(prGlueInfo, UDMA_WLCFG_0, &u4Value);
+		ucRet = kalDevRegRead(prGlueInfo, UDMA_WLCFG_0, &u4Value);
 		u4Value &= ~UDMA_WLCFG_0_RX_AGG_EN(1);
-		kalDevRegWrite(prGlueInfo, UDMA_WLCFG_0, u4Value);
+		ucRet = kalDevRegWrite(prGlueInfo, UDMA_WLCFG_0, u4Value);
 	}
 }
 
@@ -911,7 +948,7 @@ VOID glSetHifInfo(P_GLUE_INFO_T prGlueInfo, ULONG ulCookie)
 	mutex_init(&prHifInfo->vendor_req_sem);
 	prHifInfo->vendor_req_buf = kzalloc(VND_REQ_BUF_SIZE, GFP_KERNEL);
 	if (!prHifInfo->vendor_req_buf) {
-		DBGLOG(HAL, ERROR, "kzalloc vendor_req_buf %zu error\n",
+		DBGLOG(HAL, ERROR, "kzalloc vendor_req_buf %u error\n",
 			VND_REQ_BUF_SIZE);
 		goto error;
 	}
@@ -1331,14 +1368,12 @@ VOID glBusFreeIrq(PVOID pvData, PVOID pvCookie)
 
 	ASSERT(pvData);
 	if (!pvData) {
-		/* printk(KERN_INFO DRV_NAME"%s null pvData\n", __FUNCTION__); */
 		return;
 	}
 	prNetDevice = (struct net_device *)pvData;
 	prGlueInfo = (P_GLUE_INFO_T) pvCookie;
 	ASSERT(prGlueInfo);
 	if (!prGlueInfo) {
-		/* printk(KERN_INFO DRV_NAME"%s no glue info\n", __FUNCTION__); */
 		return;
 	}
 
@@ -1691,3 +1726,148 @@ void glGetHifDev(P_GL_HIF_INFO_T prHif, struct device **dev)
 {
 	*dev = &(prHif->udev->dev);
 }
+
+#if CFG_CHIP_RESET_SUPPORT
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief perform whole chip reset operation
+* \You need set the reset pin low level and set it high level to
+* \reset 7663 chip; The operation will different in other platform;
+* \the following code is a example in mtk DTV platform.
+*
+* \param[in] prGlueInfo         Pointer to the GLUE_INFO_T structure.
+*/
+/*----------------------------------------------------------------------------*/
+void kalRemoveProbe(P_GLUE_INFO_T prGlueInfo)
+{
+	uint32_t gpio_num = WIFI_DONGLE_RESET_GPIO_PIN;
+	typedef void (*gpioLegacyFunc) (unsigned int, int);
+	char *pcLegacyApiName = "mtk_gpio_set_value";
+	gpioLegacyFunc pfLegacyApi = NULL;
+#if CFG_CHIP_RESET_USE_MSTAR_GPIO_API
+	typedef void (*gpioMstarFunc)(uint32_t);
+	char *pcMstarSetLowApiName = "MDrv_GPIO_Set_Low";
+	char *pcMstarSetHighApiName = "MDrv_GPIO_Set_High";
+	gpioMstarFunc pfMstarSetLowApi = NULL;
+	gpioMstarFunc pfMstarSetHighApi = NULL;
+#endif
+
+#if CFG_CHIP_RESET_USE_DTS_GPIO_NUM
+	struct device_node *node;
+	int32_t i4Status = 0;
+
+	node = of_find_compatible_node(NULL, NULL, CHIP_RESET_DTS_NODE_NAME);
+	if (node) {
+		i4Status = of_get_named_gpio(node,
+				CHIP_RESET_GPIO_PROPERTY_NAME, 0);
+		if (i4Status >= 0) {
+			gpio_num = i4Status;
+			i4Status = 0;
+		} else if (of_property_read_u32(node,
+				CHIP_RESET_GPIO_PROPERTY_NAME,
+				&gpio_num) == 0){
+			i4Status = 0;
+		} else {
+			i4Status = -1;
+			DBGLOG(HAL, ERROR,
+				"[SER][L0]: Failed to get GPIO num, gpio property: %s\n",
+				CHIP_RESET_GPIO_PROPERTY_NAME);
+		}
+	} else {
+		i4Status = -1;
+		DBGLOG(HAL, ERROR,
+			"[SER][L0]: Failed to find dts node: %s\n",
+			CHIP_RESET_DTS_NODE_NAME);
+	}
+	if (i4Status != 0)
+		return;
+#endif
+
+	DBGLOG(HAL, WARN, "[SER][L0]: Use GPIO num: %d\n", gpio_num);
+
+	pfLegacyApi =
+		(gpioLegacyFunc) kal_kallsyms_lookup_name(pcLegacyApiName);
+	if (pfLegacyApi) {
+		DBGLOG(HAL, WARN, "[SER][L0]: Use legacy api %s\n",
+			pcLegacyApiName);
+		pfLegacyApi(gpio_num, 0);
+		mdelay(RESET_PIN_SET_LOW_TIME);
+		pfLegacyApi(gpio_num, 1);
+		return;
+	}
+
+	DBGLOG(HAL, ERROR, "[SER][L0]: Failed to find api: %s\n",
+			pcLegacyApiName);
+
+#if CFG_CHIP_RESET_USE_MSTAR_GPIO_API
+	pfMstarSetLowApi =
+		(gpioMstarFunc) kal_kallsyms_lookup_name(pcMstarSetLowApiName);
+	pfMstarSetHighApi =
+		(gpioMstarFunc) kal_kallsyms_lookup_name(pcMstarSetHighApiName);
+
+	if (pfMstarSetLowApi && pfMstarSetHighApi) {
+		DBGLOG(HAL, WARN, "[SER][L0]: Use mstar api %s and %s\n",
+			pcMstarSetLowApiName, pcMstarSetHighApiName);
+		pfMstarSetLowApi(gpio_num);
+		mdelay(RESET_PIN_SET_LOW_TIME);
+		pfMstarSetHighApi(gpio_num);
+		return;
+	}
+
+	DBGLOG(HAL, ERROR, "[SER][L0]: Failed to find api: %s or %s\n",
+		pcMstarSetLowApiName, pcMstarSetHighApiName);
+#endif
+
+#if CFG_CHIP_RESET_USE_LINUX_GPIO_API
+	i4Status = gpio_request(gpio_num, CHIP_RESET_GPIO_PROPERTY_NAME);
+	if (i4Status < 0) {
+		DBGLOG(HAL, ERROR,
+			"[SER][L0]: gpio_request(%d,%s) %d failed\n",
+			gpio_num, CHIP_RESET_GPIO_PROPERTY_NAME, i4Status);
+		return;
+	}
+	i4Status = gpio_direction_output(gpio_num, 0);
+	DBGLOG(HAL, WARN,
+		"[SER][L0]: Invoke gpio_direction_output (%d, 0) %d\n",
+		gpio_num, i4Status);
+	mdelay(RESET_PIN_SET_LOW_TIME);
+	i4Status = gpio_direction_output(gpio_num, 1);
+	DBGLOG(HAL, WARN,
+		"[SER][L0]: Invoke gpio_direction_output (%d, 1) %d\n",
+		gpio_num, i4Status);
+	gpio_free(gpio_num);
+#endif
+}
+#endif
+
+#if CFG_DROP_NOT_MY_BSSID
+static void mtk_drop_not_my_bssid(IN P_ADAPTER_T prAdapter, IN BOOL enable)
+{
+	CMD_RX_PACKET_FILTER rSetRxPacketFilter;
+
+	ASSERT(prAdapter);
+
+	if (enable)
+		prAdapter->u4OsPacketFilter |=
+		    PARAM_PACKET_FILTER_DROP_NOT_MY_BSSID;
+	else
+		prAdapter->u4OsPacketFilter &=
+		    ~PARAM_PACKET_FILTER_DROP_NOT_MY_BSSID;
+
+	DBGLOG(REQ, INFO, "New packet filter: %#08x\n",
+		prAdapter->u4OsPacketFilter);
+
+	rSetRxPacketFilter.u4RxPacketFilter = prAdapter->u4OsPacketFilter;
+
+	wlanSendSetQueryCmd(prAdapter,
+			CMD_ID_SET_RX_FILTER,
+			TRUE,
+			FALSE,
+			FALSE,
+			NULL,
+			NULL,
+			sizeof(CMD_RX_PACKET_FILTER),
+			(PUINT_8) & rSetRxPacketFilter, NULL, 0);
+}
+#endif
+

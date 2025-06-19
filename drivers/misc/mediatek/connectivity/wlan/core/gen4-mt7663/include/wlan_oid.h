@@ -120,6 +120,9 @@
 #define PARAM_PACKET_FILTER_P2P_MASK		0xC0000000
 #define PARAM_PACKET_FILTER_PROBE_REQ		0x80000000
 #define PARAM_PACKET_FILTER_ACTION_FRAME	0x40000000
+#define PARAM_PACKET_FILTER_AUTH		0x20000000
+#define PARAM_PACKET_FILTER_ASSOC_REQ		0x10000000
+
 #endif
 
 #if CFG_SLT_SUPPORT
@@ -597,6 +600,16 @@ enum PARAM_DEVICE_POWER_STATE {
 	ParamDeviceStateD3,
 	ParamDeviceStateMaximum
 };
+
+#if CFG_SUPPORT_FW_DBG_LEVEL_CTRL
+/* FW debug control level related definition and enumerations */
+#define FW_DBG_LEVEL_DONT_SET   0
+#define FW_DBG_LEVEL_ERROR      (1 << 0)
+#define FW_DBG_LEVEL_WARN       (1 << 1)
+#define FW_DBG_LEVEL_STATE      (1 << 2)
+#define FW_DBG_LEVEL_INFO       (1 << 3)
+#define FW_DBG_LEVEL_LOUD       (1 << 4)
+#endif
 
 struct PARAM_POWER_MODE_ {
 	uint8_t ucBssIdx;
@@ -2456,9 +2469,17 @@ struct PARAM_CUSTOM_MONITOR_SET_STRUCT {
 /*--------------------------------------------------------------*/
 /*! \brief MTK Auto Channel Selection related Container         */
 /*--------------------------------------------------------------*/
+enum ENUM_SAFE_CH_MASK {
+	ENUM_SAFE_CH_MASK_BAND_2G4 = 0,
+	ENUM_SAFE_CH_MASK_BAND_5G_0 = 1,
+	ENUM_SAFE_CH_MASK_BAND_5G_1 = 2,
+	ENUM_SAFE_CH_MASK_BAND_5G_2 = 3,
+	ENUM_SAFE_CH_MASK_MAX_NUM = 4,
+};
+
 struct LTE_SAFE_CHN_INFO {
-	/* NL80211_TESTMODE_AVAILABLE_CHAN_ATTR_MAX */
-	uint32_t au4SafeChannelBitmask[5];
+	/* ENUM_SAFE_CH_MASK_MAX_NUM */
+	uint32_t au4SafeChannelBitmask[ENUM_SAFE_CH_MASK_MAX_NUM];
 };
 
 struct PARAM_CHN_LOAD_INFO {
@@ -2476,6 +2497,7 @@ struct PARAM_CHN_RANK_INFO {
 };
 
 struct PARAM_GET_CHN_INFO {
+	uint8_t ucRoleIndex;
 	struct LTE_SAFE_CHN_INFO rLteSafeChnList;
 	struct PARAM_CHN_LOAD_INFO rEachChnLoad[MAX_CHN_NUM];
 	u_int8_t fgDataReadyBit;
@@ -2487,6 +2509,7 @@ struct PARAM_PREFER_CHN_INFO {
 	uint8_t ucChannel;
 	uint16_t u2APNumScore;
 	uint8_t ucReserved;
+	uint32_t u4Dirtiness;
 };
 #endif
 
@@ -2661,6 +2684,187 @@ struct PARAM_TM_T {
 };
 #endif
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+struct T_MULTI_AP_BSS_METRICS_RESP {
+	uint32_t uIfIndex;
+	uint8_t mBssid[MAC_ADDR_LEN];
+	uint8_t u8Channel;
+	uint16_t u16AssocStaNum;
+	uint8_t u8ChanUtil;
+	int32_t iChanNoise;
+};
+
+struct T_MULTI_AP_STA_ASSOC_METRICS_RESP {
+	uint32_t uIfIndex;
+	uint8_t mBssid[MAC_ADDR_LEN];
+	uint8_t mStaMac[MAC_ADDR_LEN];
+	uint64_t uBytesSent;
+	uint64_t uBytesRecv;
+	uint64_t uPktsSent;
+	uint64_t uPktsRecv;
+	uint64_t uPktsTxError;
+	uint32_t uPktsRxError;
+	uint32_t uRetransCnt;
+	int32_t iRssi;
+	uint32_t uPhyTxRate;
+	uint32_t uPhyRxRate;
+	uint32_t uAssocRate;
+	uint32_t uDeltaTime;
+};
+
+ /* TODO: check this value in user-space */
+#define STA_CAP_LEN_MAX 512
+struct T_MULTI_AP_STA_EVENT_NOTIFY {
+	uint8_t mStaMac[MAC_ADDR_LEN];
+	uint8_t mBssid[MAC_ADDR_LEN];
+	uint8_t	u8Status;
+	uint32_t uCapLen;
+	uint8_t u8Cap[STA_CAP_LEN_MAX];
+} __KAL_ATTRIB_PACKED__;
+
+#define SAP_HTCAP_TXSTREAMNUM_OFFSET 0
+#define SAP_HTCAP_RXSTREAMNUM_OFFSET 2
+#define SAP_HTCAP_SGIFOR20M_OFFSET   4
+#define SAP_HTCAP_SGIFOR40M_OFFSET   5
+#define SAP_HTCAP_HTFOR40M_OFFSET    6
+#define SAP_HTCAP_RESERVED       BIT(7)
+
+#define SAP_VHTCAP_TXSTREAMNUM_OFFSET   0
+#define SAP_VHTCAP_RXSTREAMNUM_OFFSET   3
+#define SAP_VHTCAP_SGIFOR80M_OFFSET     6
+#define SAP_VHTCAP_SGIFOR160M_OFFSET    7
+#define SAP_VHTCAP_VHTFORDUAL80M_OFFSET 8
+#define SAP_VHTCAP_VHTFOR160M_OFFSET    9
+#define SAP_VHTCAP_SUBEAMFORMER_OFFSET  10
+#define SAP_VHTCAP_MUBEAMFORMER_OFFSET  11
+#define SAP_VHTCAP_RESERVED     BITS(12, 15)
+
+#define SAP_HECAP_TXSTREAMNUM_OFFSET   0
+#define SAP_HECAP_RXSTREAMNUM_OFFSET   3
+#define SAP_HECAP_HEFORDUAL80M_OFFSET  6
+#define SAP_HECAP_HEFOR160M_OFFSET     7
+#define SAP_HECAP_SUBEAMFORMER_OFFSET  8
+#define SAP_HECAP_MUBEAMFORMER_OFFSET  9
+#define SAP_HECAP_ULMUMIMO_OFFSET      10
+#define SAP_HECAP_ULMUMIMOOFDMA_OFFSET 11
+#define SAP_HECAP_DLMUMIMOOFDMA_OFFSET 12
+#define SAP_HECAP_ULOFDMA_OFFSET       13
+#define SAP_HECAP_DLOFDMA_OFFSET       14
+#define SAP_HECAP_RESERVED         BIT(15)
+
+#define SAP_UNASSOC_METRICS_STA_MAX 16
+
+struct T_MULTI_AP_BSS_STATUS_REPORT {
+	uint32_t uIfIndex;
+	uint8_t mBssid[MAC_ADDR_LEN];
+	uint32_t uStatus;
+	uint8_t u8Channel;
+	uint8_t u8OperClass;
+	uint8_t u8Txpower;
+	uint32_t uBand;
+	uint8_t uHtCap;
+	uint16_t u16VhtTxMcs;
+	uint16_t u16VhtRxMcs;
+	uint16_t u16VhtCap;
+	uint8_t u8HeMcsNum;
+	uint8_t u8HeMcs[16];
+	uint16_t u16HeCap;
+} __KAL_ATTRIB_PACKED__;
+
+struct T_MULTI_AP_STA_UNASSOC_METRICS {
+	uint8_t mStaMac[MAC_ADDR_LEN];
+	uint32_t uTime;
+	int32_t iRssi;
+	uint8_t u8Channel;
+};
+
+struct T_MULTI_AP_STA_UNASSOC_METRICS_RESP {
+	uint32_t uIfIndex;
+	uint8_t mBssid[MAC_ADDR_LEN];
+	uint8_t u8StaNum;
+	struct T_MULTI_AP_STA_UNASSOC_METRICS
+		tMetrics[SAP_UNASSOC_METRICS_STA_MAX];
+};
+#endif /* CFG_CCN7_SAP_EASYMESH */
+
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+#define ELEM_LEN_MAX 1024
+struct T_MULTI_AP_BEACON_METRICS_RESP {
+	uint8_t mStaMac[MAC_ADDR_LEN];
+	uint8_t u8ElemNum;
+	uint32_t uElemLen;
+	uint8_t uElem[ELEM_LEN_MAX];
+};
+
+struct PARAM_CUSTOM_BCN_REP_REQ_STRUCT {
+	uint8_t aucPeerMac[MAC_ADDR_LEN];
+	uint16_t u2Repetition;
+	uint16_t u2MeasureDuration;
+	uint8_t ucOperClass;
+	uint8_t aucBssid[MAC_ADDR_LEN];
+	uint8_t aucSsid[PARAM_MAX_LEN_SSID + 1];
+	uint8_t ucChannel;
+	uint16_t u2RandomInterval;
+	uint8_t ucMeasurementMode;
+	uint8_t ucReportCondition;
+	uint8_t ucReportReference;
+	uint8_t ucReportingDetail;
+	uint8_t ucNumberOfRequest;
+	uint8_t ucRequestElemList[ELEM_LEN_MAX];
+	uint8_t ucNumberOfAPChanReport;
+	uint8_t ucChanList[MAX_CHN_NUM];
+};
+#endif /* CFG_AP_80211K_SUPPORT */
+
+#if IS_ENABLED(CFG_AP_80211V_SUPPORT)
+struct T_MAC_CHAN {
+	uint8_t mMac[MAC_ADDR_LEN];
+	uint32_t u4BSSIDInfo;
+	uint8_t ucOperClass;
+	uint8_t ucChannel;
+	uint8_t ucPhyType;
+	uint8_t ucPreference;
+};
+
+#define BCN_REQ_PARAM_REQUESTMODE_OFFSET 0
+#define BCN_REQ_PARAM_DISIMMINENT_OFFSET 1
+#define BCN_REQ_PARAM_ABRIDGED_OFFSET    2
+#define BCN_REQ_PARAM_RESERVED     BITS(3, 7)
+
+#define STEER_STA_NUM_MAX 32
+#define DEST_BSSID_NUM_MAX 32
+
+struct T_MULTI_AP_STA_STEERING_REQ {
+	uint32_t uIfindex;
+	uint8_t mBssid[MAC_ADDR_LEN];
+	uint8_t tReqParam;
+	uint16_t u16OpptyWin;
+	uint16_t u16DisassocTimer;
+	uint8_t u8StaNum;
+	uint8_t tStaList[MAC_ADDR_LEN][STEER_STA_NUM_MAX];
+	uint8_t u8BssidNum;
+	struct T_MAC_CHAN tBssidList[DEST_BSSID_NUM_MAX];
+};
+
+struct T_MULTI_AP_STA_STEERING_REPORT {
+	uint8_t mStaMac[MAC_ADDR_LEN];
+	uint8_t mBssid[MAC_ADDR_LEN];
+	uint8_t u8Status;
+	uint8_t mDestBssid[MAC_ADDR_LEN];
+};
+
+struct PARAM_CUSTOM_BTM_REQ_STRUCT {
+	uint8_t aucPeerMac[MAC_ADDR_LEN];
+	uint8_t ucEssImm;
+	uint16_t u2DisassocTimer;
+	uint8_t ucAbridged;
+	uint8_t ucValidityInterval;
+	uint8_t ucTargetBSSIDCnt;
+	uint8_t aucSessionUrl[256];
+	struct T_MAC_CHAN ucTargetBSSIDList[DEST_BSSID_NUM_MAX];
+};
+#endif /* CFG_AP_80211V_SUPPORT */
+
 /*******************************************************************************
  *                            P U B L I C   D A T A
  *******************************************************************************
@@ -2743,6 +2947,13 @@ wlanoidSetConnect(IN struct ADAPTER *prAdapter,
 		  IN void *pvSetBuffer,
 		  IN uint32_t u4SetBufferLen,
 		  OUT uint32_t *pu4SetInfoLen);
+
+#if CFG_SUPPORT_CFG80211_AUTH
+uint32_t
+wlanoidSendAuthAssoc(IN struct ADAPTER *prAdapter,
+		IN void *pvSetBuffer, IN uint32_t u4SetBufferLen,
+		OUT uint32_t *pu4SetInfoLen);
+#endif
 
 uint32_t
 wlanoidSetSsid(IN struct ADAPTER *prAdapter,
@@ -4204,8 +4415,6 @@ wlanoidQueryCoexIso(IN struct ADAPTER *prAdapter,
 		    IN uint32_t u4QueryBufferLen,
 		    OUT uint32_t *pu4QueryInfoLen);
 
-#endif /* _WLAN_OID_H */
-
 #ifdef CFG_GET_TEMPURATURE
 uint32_t
 wlanoidGetTemperature(IN struct ADAPTER *prAdapter,
@@ -4238,3 +4447,26 @@ uint32_t wlanoidSetEnableTmr(IN struct ADAPTER *prAdapter,
 			IN uint32_t u4SetBufferLen,
 			OUT uint32_t *pu4SetInfoLen);
 #endif
+
+#if CFG_SUPPORT_MDNS_OFFLOAD
+uint32_t wlanoidSetMdnsCmdToFw(IN struct ADAPTER *prAdapter,
+				IN void *pvSetBuffer,
+				IN uint32_t u4SetBufferLen,
+				OUT uint32_t *pu4SetInfoLen);
+#endif
+
+#if IS_ENABLED(CFG_AP_80211K_SUPPORT)
+uint32_t wlanoidSendBeaconReportRequest(struct ADAPTER *prAdapter,
+					void *pvSetBuffer,
+					uint32_t u4SetBufferLen,
+					uint32_t *pu4SetInfoLen);
+#endif /* CFG_AP_80211K_SUPPORT */
+
+#if IS_ENABLED(CFG_AP_80211V_SUPPORT)
+uint32_t wlanoidSendBTMRequest(struct ADAPTER *prAdapter,
+				    void *pvSetBuffer, uint32_t u4SetBufferLen,
+				    uint32_t *pu4SetInfoLen);
+#endif /* CFG_AP_80211V_SUPPORT */
+
+#endif /* _WLAN_OID_H */
+

@@ -227,6 +227,10 @@
 #include <uapi/linux/nl80211.h>
 #endif
 
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+#include <net/tso.h>
+#endif
+
 #include "gl_typedef.h"
 #include "typedef.h"
 #include "queue.h"
@@ -304,6 +308,9 @@ extern void wifi_fwlog_event_func_register(wifi_fwlog_event_func_cb pfFwlog);
 #define GLUE_FLAG_RX_TO_OS				BIT(14)
 #define GLUE_FLAG_HIF_FW_OWN			BIT(15)
 #define GLUE_FLAG_HIF_PRT_HIF_DBG_INFO	BIT(16)
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+#define GLUE_FLAG_RX_DE_AGG_IN_THREAD		BIT(17)
+#endif
 
 #define GLUE_FLAG_RX_BIT					(10)
 #define GLUE_FLAG_TX_CMD_DONE_BIT			(11)
@@ -312,6 +319,9 @@ extern void wifi_fwlog_event_func_register(wifi_fwlog_event_func_cb pfFwlog);
 #define GLUE_FLAG_RX_TO_OS_BIT				(14)
 #define GLUE_FLAG_HIF_FW_OWN_BIT			(15)
 #define GLUE_FLAG_HIF_PRT_HIF_DBG_INFO_BIT	(16)
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+#define GLUE_FLAG_RX_DE_AGG_IN_THREAD_BIT		(17)
+#endif
 #endif
 
 #define GLUE_BOW_KFIFO_DEPTH        (1024)
@@ -340,8 +350,9 @@ extern void wifi_fwlog_event_func_register(wifi_fwlog_event_func_cb pfFwlog);
 #define WLAN_AKM_SUITE_SAE		0x000FAC08
 #endif
 #endif
-#if CFG_SUPPORT_OWE
-#define WLAN_AKM_SUITE_OWE		0x000FAC12
+#if CFG_SUPPORT_OWE && \
+	KERNEL_VERSION(5, 7, 0) > CFG80211_VERSION_CODE
+#define WLAN_AKM_SUITE_OWE			0x000FAC12
 #endif
 
 #define IW_AUTH_CIPHER_GCMP256  0x00000080
@@ -440,7 +451,12 @@ enum ENUM_PKT_FLAG {
 	ENUM_PKT_ICMP,		/* ICMP */
 	ENUM_PKT_TDLS,		/* TDLS */
 	ENUM_PKT_DNS,		/* DNS */
-
+#if CFG_SUPPORT_TPENHANCE_MODE
+	ENUM_PKT_TCP_ACK,
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+	ENUM_PKT_TSO,		/* TSO */
+#endif
 	ENUM_PKT_FLAG_NUM
 };
 
@@ -625,6 +641,11 @@ struct GLUE_INFO {
 		rHifHaltComp;	/* indicate hif_thread halt complete */
 	struct completion
 		rRxHaltComp;	/* indicate hif_thread halt complete */
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+	/* indicate sdio_rx_DeAgg_thread halt complete */
+	struct completion
+		rxDeAggHaltComp;
+#endif
 
 	uint32_t u4TxThreadPid;
 	uint32_t u4RxThreadPid;
@@ -659,6 +680,10 @@ struct GLUE_INFO {
 	wait_queue_head_t waitq_rx;
 	struct task_struct *rx_thread;
 
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+	wait_queue_head_t waitq_rxDeAgg;
+	struct task_struct *rx_DeAgg_thread;
+#endif
 #endif
 	struct tasklet_struct rRxTask;
 	struct tasklet_struct rTxCompleteTask;
@@ -753,8 +778,8 @@ struct GLUE_INFO {
 	uint8_t aucDADipv6[16];
 #endif				/* CFG_SUPPORT_PASSPOINT */
 
-	KAL_WAKE_LOCK_T rIntrWakeLock;
-	KAL_WAKE_LOCK_T rTimeoutWakeLock;
+	KAL_WAKE_LOCK_T *prIntrWakeLock;
+	KAL_WAKE_LOCK_T *prTimeoutWakeLock;
 
 #if CFG_MET_PACKET_TRACE_SUPPORT
 	u_int8_t fgMetProfilingEn;
@@ -770,6 +795,10 @@ struct GLUE_INFO {
 	int32_t i4RssiCache;
 	uint32_t u4LinkSpeedCache;
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+	struct delayed_work rChanNoiseControlWork;
+	struct delayed_work rChanNoiseGetInfoWork;
+#endif
 
 	uint32_t u4InfType;
 
@@ -825,6 +854,15 @@ struct GLUE_INFO {
 	uint8_t ucRxNapiEnable;
 	struct sk_buff_head rRxNapiSkbQ;
 #endif
+
+#if CFG_SUPPORT_TPENHANCE_MODE
+	/* Tp Enhance */
+	struct QUE rTpeAckQueue;
+	uint32_t u4TpeMaxPktNum;
+	uint64_t u8TpeTimestamp;
+	uint32_t u4TpeTimeout;
+	struct timer_list rTpeTimer;
+#endif /* CFG_SUPPORT_TPENHANCE_MODE */
 };
 
 typedef irqreturn_t(*PFN_WLANISR) (int irq, void *dev_id,

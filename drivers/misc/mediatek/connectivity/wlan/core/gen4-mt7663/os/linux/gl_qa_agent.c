@@ -2136,8 +2136,15 @@ static int32_t HQA_ReadEEPROM(struct net_device *prNetDev,
 #if  (CFG_EEPROM_PAGE_ACCESS == 1)
 	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prNetDev));
 	ASSERT(prGlueInfo);
-	if (prGlueInfo->prAdapter &&
-	    prGlueInfo->prAdapter->chip_info &&
+
+	if (!prGlueInfo->prAdapter) {
+		rStatus = WLAN_STATUS_FAILURE;
+		log_dbg(RFTEST, WARN, "prAdapter is NULL\n");
+		ResponseToQA(HqaCmdFrame, prIwReqData, 2, rStatus);
+		return rStatus;
+	}
+
+	if (prGlueInfo->prAdapter->chip_info &&
 	    !prGlueInfo->prAdapter->chip_info->is_support_efuse) {
 		rStatus = WLAN_STATUS_NOT_SUPPORTED;
 		log_dbg(RFTEST, WARN, "Efuse not support\n");
@@ -3046,13 +3053,12 @@ static int32_t HQA_GetFreqOffset(struct net_device
 	struct PARAM_MTK_WIFI_TEST_STRUCT rRfATInfo;
 
 	prGlueInfo = *((struct GLUE_INFO **) netdev_priv(prNetDev));
-	if (!prGlueInfo) {
+	if (!prGlueInfo || !prGlueInfo->prAdapter) {
 		ResponseToQA(HqaCmdFrame, prIwReqData, 2, i4Ret);
 		return i4Ret;
 	}
 
-	if (prGlueInfo->prAdapter)
-		prChipInfo = prGlueInfo->prAdapter->chip_info;
+	prChipInfo = prGlueInfo->prAdapter->chip_info;
 
 	/* Mobile chips don't support GetFreqOffset */
 	if (prChipInfo && prChipInfo->u4ChipIpVersion
@@ -6946,6 +6952,9 @@ static int32_t HQA_MUSetMUTable(struct net_device *prNetDev,
 
 	ResponseToQA(HqaCmdFrame, prIwReqData, 2, i4Ret);
 
+	if (prTable != NULL)
+		kfree(prTable);
+
 	return i4Ret;
 }
 
@@ -7701,7 +7710,7 @@ int32_t connacSetICapStart(struct GLUE_INFO *prGlueInfo,
 	prICapInfo->u4Architech = CAP_ON_CHIP;
 	prICapInfo->u4PhyIdx = 0;
 	prICapInfo->u4CapSource = CAP_WIFI_PHY;
-#if CFG_MTK_EMI
+#ifdef CONFIG_MTK_EMI
 	prICapInfo->u4EmiStartAddress =
 		(uint32_t) (gConEmiPhyBase & 0xFFFFFFFF);
 	prICapInfo->u4EmiEndAddress =

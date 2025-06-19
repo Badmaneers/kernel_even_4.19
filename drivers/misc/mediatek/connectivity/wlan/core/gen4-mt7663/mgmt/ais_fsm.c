@@ -275,6 +275,7 @@ void aisInitializeConnectionSettings(IN struct ADAPTER *prAdapter,
 #if CFG_SUPPORT_OWE
 	kalMemSet(&prConnSettings->rOweInfo, 0, sizeof(struct OWE_INFO_T));
 #endif
+	kalMemSet(&prConnSettings->rRsnXE, 0, sizeof(struct RSNXE));
 } /* end of aisFsmInitializeConnectionSettings() */
 
 /*----------------------------------------------------------------------------*/
@@ -325,7 +326,6 @@ void aisFsmInit(IN struct ADAPTER *prAdapter)
 	prAisFsmInfo->ucSeqNumOfScanReq = 0;
 	prAisFsmInfo->u2SeqNumOfScanReport = AIS_SCN_REPORT_SEQ_NOT_SET;
 
-	prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
 #if CFG_SUPPORT_ROAMING
 	prAisFsmInfo->fgIsRoamingScanPending = FALSE;
 #endif /* CFG_SUPPORT_ROAMING */
@@ -577,7 +577,9 @@ void aisFsmStateInit_JOIN(IN struct ADAPTER *prAdapter,
 	struct CONNECTION_SETTINGS *prConnSettings;
 	struct STA_RECORD *prStaRec;
 	struct MSG_SAA_FSM_START *prJoinReqMsg;
-
+#if (CFG_SUPPORT_NETIF_STOP == 1)
+	struct net_device *prNetDev = NULL;
+#endif
 	DEBUGFUNC("aisFsmStateInit_JOIN()");
 
 	prAisFsmInfo = &(prAdapter->rWifiVar.rAisFsmInfo);
@@ -599,6 +601,16 @@ void aisFsmStateInit_JOIN(IN struct ADAPTER *prAdapter,
 
 	prAisFsmInfo->prTargetStaRec = prStaRec;
 
+#if (CFG_SUPPORT_NETIF_STOP == 1)
+	prNetDev = (struct net_device *)wlanGetNetInterfaceByBssIdx(
+				prAdapter->prGlueInfo,
+				prAdapter->prAisBssInfo->ucBssIndex);
+	if (prNetDev != NULL) {
+		netdev_reset_queue(prNetDev);
+		netif_tx_start_all_queues(prNetDev);
+		DBGLOG(AIS, EVENT, "Start Q\n");
+	}
+#endif
 	/* 4 <2.1> sync. to firmware domain */
 	if (prStaRec->ucStaState == STA_STATE_1)
 		cnmStaRecChangeState(prAdapter, prStaRec, STA_STATE_1);
@@ -769,21 +781,8 @@ void aisFsmStateInit_JOIN(IN struct ADAPTER *prAdapter,
 	prJoinReqMsg->ucSeqNum = ++prAisFsmInfo->ucSeqNumOfReqMsg;
 	prJoinReqMsg->prStaRec = prStaRec;
 
-	if (1) {
-		int j;
-		struct FRAG_INFO *prFragInfo;
+	nicRxClearFrag(prAdapter, prStaRec);
 
-		for (j = 0; j < MAX_NUM_CONCURRENT_FRAGMENTED_MSDUS; j++) {
-			prFragInfo = &prStaRec->rFragInfo[j];
-
-			if (prFragInfo->pr1stFrag) {
-				/* nicRxReturnRFB(prAdapter,
-				 * prFragInfo->pr1stFrag);
-				 */
-				prFragInfo->pr1stFrag = (struct SW_RFB *)NULL;
-			}
-		}
-	}
 #if CFG_SUPPORT_802_11K
 	rlmSetMaxTxPwrLimit(prAdapter,
 			    (prBssDesc->cPowerLimit != RLM_INVALID_POWER_LIMIT)
@@ -993,9 +992,6 @@ void aisFsmStateAbort_JOIN(IN struct ADAPTER *prAdapter)
 
 	/* 3.1 stop join timeout timer */
 	cnmTimerStopTimer(prAdapter, &prAisFsmInfo->rJoinTimeoutTimer);
-
-	/* 3.2 reset local variable */
-	prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
 }				/* end of aisFsmAbortJOIN() */
 
 /*----------------------------------------------------------------------------*/
@@ -1068,9 +1064,6 @@ void aisFsmStateAbort_NORMAL_TR(IN struct ADAPTER *prAdapter)
 
 	/* 2.1 stop join timeout timer */
 	cnmTimerStopTimer(prAdapter, &prAisFsmInfo->rJoinTimeoutTimer);
-
-	/* 2.2 reset local variable */
-	prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
 }				/* end of aisFsmAbortNORMAL_TR() */
 
 #if CFG_SUPPORT_ADHOC
@@ -1130,12 +1123,14 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 	uint8_t ucChannel;
 	uint16_t u2ScanIELen;
 	u_int8_t fgIsTransition = (u_int8_t) FALSE;
-#if CFG_SUPPORT_DBDC
-	struct CNM_DBDC_CAP rDbdcCap;
-#endif /*CFG_SUPPORT_DBDC */
 	uint8_t ucRfBw;
 	uint8_t ucReasonCode;
 	struct GLUE_INFO *prGlueInfo;
+#if CFG_SUPPORT_DBDC
+	struct CNM_DBDC_CAP rDbdcCap;
+
+	kalMemZero(&rDbdcCap, sizeof(struct CNM_DBDC_CAP));
+#endif /*CFG_SUPPORT_DBDC */
 
 	DEBUGFUNC("aisFsmSteps()");
 
@@ -1242,6 +1237,7 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 						nicActivateNetwork(prAdapter,
 						prAdapter->prAisBssInfo->
 						ucBssIndex);
+					}
 #endif
 
 					/* check for other pending request */
@@ -1254,6 +1250,9 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 						eNextState = AIS_STATE_SCAN;
 						prConnSettings->
 						fgIsScanReqIssued = TRUE;
+						cnmTimerStartTimer(prAdapter,
+						&prAisFsmInfo->rScanDoneTimer,
+					SEC_TO_MSEC(AIS_SCN_DONE_TIMEOUT_SEC));
 
 						fgIsTransition = TRUE;
 					}
@@ -1271,6 +1270,9 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 
 				prConnSettings->fgIsScanReqIssued = TRUE;
 				eNextState = AIS_STATE_SCAN;
+				cnmTimerStartTimer(prAdapter,
+					&prAisFsmInfo->rScanDoneTimer,
+					SEC_TO_MSEC(AIS_SCN_DONE_TIMEOUT_SEC));
 				fgIsTransition = TRUE;
 
 				/* free the message */
@@ -1390,6 +1392,8 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 						cnmWmmIndexDecision(prAdapter,
 						prAisBssInfo);
 #if CFG_SUPPORT_DBDC
+					kalMemZero(&rDbdcCap,
+						sizeof(rDbdcCap));
 					cnmDbdcEnableDecision(prAdapter,
 						prAisBssInfo->ucBssIndex,
 						prBssDesc->eBand,
@@ -1691,6 +1695,13 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 			break;
 
 		case AIS_STATE_SCAN:
+#if CFG_SUPPORT_CFG80211_AUTH
+			/*clear all bss Desc to avoid the bss
+			 *in driver and supplicant is not sync
+			 */
+			scanRemoveAllBssDesc(prAdapter);
+#endif
+			kal_fallthrough;
 		case AIS_STATE_ONLINE_SCAN:
 		case AIS_STATE_LOOKING_FOR:
 
@@ -1741,7 +1752,8 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 			prScanReqMsg->ucSeqNum =
 			    ++prAisFsmInfo->ucSeqNumOfScanReq;
 			if (prAisFsmInfo->u2SeqNumOfScanReport ==
-			    AIS_SCN_REPORT_SEQ_NOT_SET) {
+			    AIS_SCN_REPORT_SEQ_NOT_SET
+				) {
 				prAisFsmInfo->u2SeqNumOfScanReport =
 				    (uint16_t) prScanReqMsg->ucSeqNum;
 			}
@@ -1838,9 +1850,11 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 				    ucChannel;
 			} else if (prAisBssInfo->eConnectionState ==
 				   PARAM_MEDIA_STATE_CONNECTED
+#if CFG_SUPPORT_ROAMING
 				   && (prAdapter->rWifiVar.
 				       rRoamingInfo.eCurrentState ==
 				       ROAMING_STATE_DISCOVERY)
+#endif
 				   && prAisFsmInfo->fgTargetChnlScanIssued) {
 				struct RF_CHANNEL_INFO *prChnlInfo =
 				    &prScanReqMsg->arChnlInfoList[0];
@@ -2122,6 +2136,24 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 				       &prMsgChReq->ucRfCenterFreqSeg1,
 				       &prMsgChReq->ucPrimaryChannel);
 
+			/* Fix the IOT issue of low DL t-put of VHT40 and HE40.
+			 * The root cause is that the channel width of operation
+			 * mode notification element in association request is
+			 * wrong. According to 11ac 10.41, it shall be the
+			 * maximum receiving bandwidth in operation rather than
+			 * maximum chip capability. For example, it shall be
+			 * 40MHz rather than 80MHz in VHT40 and HE40. Otherwise,
+			 * some AP will try to transmit packets in 80MHz first
+			 * even we can only receive packets with bandwidth up to
+			 * 40MHz. So, we copy the bandwidth information in
+			 * MID_MNY_CNM_CH_REQ to AIS BssInfo for later reference
+			 * of the gereration of the operation mode notification
+			 * element.
+			 */
+			prAisBssInfo->ucVhtChannelWidth =
+				prMsgChReq->eRfChannelWidth;
+			prAisBssInfo->eBssSCO = prMsgChReq->eRfSco;
+
 			mboxSendMsg(prAdapter, MBOX_ID_0,
 				    (struct MSG_HDR *)prMsgChReq,
 				    MSG_SEND_METHOD_BUF);
@@ -2164,7 +2196,8 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 #endif /* CFG_SUPPORT_ADHOC */
 
 		case AIS_STATE_NORMAL_TR:
-			if (prAisFsmInfo->fgIsInfraChannelFinished == FALSE) {
+			if (timerPendingTimer(&prAisFsmInfo->
+					rJoinTimeoutTimer)) {
 				/* Don't do anything when rJoinTimeoutTimer
 				 * is still ticking
 				 */
@@ -2200,6 +2233,13 @@ void aisFsmSteps(IN struct ADAPTER *prAdapter, enum ENUM_AIS_STATE eNextState)
 			break;
 
 		case AIS_STATE_DISCONNECTING:
+#if CFG_SUPPORT_CFG80211_AUTH
+			prConnSettings->fgIsDisconnectedByNonRequest = TRUE;
+			if (prAisFsmInfo->prTargetBssDesc) {
+				prAisFsmInfo->prTargetBssDesc->fgIsConnecting
+					= FALSE;
+			}
+#endif
 			/* send for deauth frame for disconnection */
 			ucReasonCode = REASON_CODE_DEAUTH_LEAVING_BSS;
 #if CFG_DISCONN_DEBUG_FEATURE
@@ -2448,9 +2488,11 @@ void aisFsmRunEventScanDone(IN struct ADAPTER *prAdapter,
 		prAisFsmInfo->u2SeqNumOfScanReport) {
 		prAisFsmInfo->u2SeqNumOfScanReport = AIS_SCN_REPORT_SEQ_NOT_SET;
 		prConnSettings->fgIsScanReqIssued = FALSE;
-		kalScanDone(prAdapter->prGlueInfo, KAL_NETWORK_TYPE_AIS_INDEX,
-			    (eStatus == SCAN_STATUS_DONE) ?
-			    WLAN_STATUS_SUCCESS : WLAN_STATUS_FAILURE);
+		if (prRmReq->rBcnRmParam.eState != RM_ON_GOING)
+			kalScanDone(prAdapter->prGlueInfo,
+				KAL_NETWORK_TYPE_AIS_INDEX,
+				(eStatus == SCAN_STATUS_DONE) ?
+				WLAN_STATUS_SUCCESS : WLAN_STATUS_FAILURE);
 	}
 	if (ucSeqNumOfCompMsg != prAisFsmInfo->ucSeqNumOfScanReq) {
 		DBGLOG(AIS, WARN,
@@ -2497,6 +2539,14 @@ void aisFsmRunEventScanDone(IN struct ADAPTER *prAdapter,
 			break;
 
 		default:
+			prConnSettings->fgIsScanReqIssued = FALSE;
+			/* reset scan IE buffer */
+			kalScanDone(prAdapter->prGlueInfo,
+			KAL_NETWORK_TYPE_AIS_INDEX,
+			WLAN_STATUS_SUCCESS);
+#if CFG_SUPPORT_AGPS_ASSIST
+			scanReportScanResultToAgps(prAdapter);
+#endif
 			break;
 
 		}
@@ -2606,8 +2656,6 @@ void aisFsmRunEventAbort(IN struct ADAPTER *prAdapter,
 			/* 2.1 stop join timeout timer */
 			cnmTimerStopTimer(prAdapter,
 					  &prAisFsmInfo->rJoinTimeoutTimer);
-			/* 2.2 reset local variable */
-			prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
 			aisFsmSteps(prAdapter, AIS_STATE_SEARCH);
 		} else {
 			aisFsmIsRequestPending(prAdapter,
@@ -2642,8 +2690,6 @@ void aisFsmRunEventAbort(IN struct ADAPTER *prAdapter,
 			/* 2.1 stop join timeout timer */
 			cnmTimerStopTimer(prAdapter,
 					  &prAisFsmInfo->rJoinTimeoutTimer);
-			/* 2.2 reset local variable */
-			prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
 
 			prAdapter->prAisBssInfo->ucReasonOfDisconnect =
 			    ucReasonOfDisconnect;
@@ -3031,8 +3077,11 @@ enum ENUM_AIS_STATE aisFsmJoinCompleteAction(IN struct ADAPTER *prAdapter,
 			/* 4 <2.1> Redo JOIN process with other Auth Type
 			 * if possible
 			 */
-			if (aisFsmStateInit_RetryJOIN(prAdapter, prStaRec) ==
-			    FALSE) {
+#if !CFG_SUPPORT_CFG80211_AUTH
+			if (aisFsmStateInit_RetryJOIN(prAdapter, prStaRec)
+					== FALSE)
+#endif
+			{
 				struct BSS_DESC *prBssDesc;
 				struct PARAM_SSID rSsid;
 				struct CONNECTION_SETTINGS *prConnSettings;
@@ -3050,9 +3099,6 @@ enum ENUM_AIS_STATE aisFsmJoinCompleteAction(IN struct ADAPTER *prAdapter,
 				/* 3.1 stop join timeout timer */
 				cnmTimerStopTimer(prAdapter,
 					&prAisFsmInfo->rJoinTimeoutTimer);
-
-				/* 3.2 reset local variable */
-				prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
 				/* Support AP Selection */
 				prAisFsmInfo->ucJoinFailCntAfterScan++;
 
@@ -3092,6 +3138,15 @@ enum ENUM_AIS_STATE aisFsmJoinCompleteAction(IN struct ADAPTER *prAdapter,
 						prAisBssInfo->prStaRecOfAP)
 						cnmStaRecFree(prAdapter,
 							prStaRec);
+#if CFG_SUPPORT_CFG80211_AUTH
+					/* join fail, return disconnect
+					* not to try driver reconnect
+					*/
+					prAdapter->rWifiVar.
+						rConnSettings.bss = NULL;
+					DBGLOG(AIS, WARN,
+						"no bss find, Join failure\n");
+#endif
 					eNextState = AIS_STATE_JOIN_FAILURE;
 					break;
 				}
@@ -3205,13 +3260,30 @@ enum ENUM_AIS_STATE aisFsmJoinCompleteAction(IN struct ADAPTER *prAdapter,
 					 * STATUS_CODE_ASSOC_DENIED_AP_OVERLOAD
 					 * , or AP block STA
 					 */
+#if CFG_SUPPORT_CFG80211_AUTH
+					prAdapter->rWifiVar.
+						rConnSettings.bss = NULL;
+					DBGLOG(AIS, WARN,
+						"Join fail, disconnect-1\n");
+#endif
 					eNextState = AIS_STATE_JOIN_FAILURE;
 				} else {
+#if CFG_SUPPORT_CFG80211_AUTH
+					/* join fail, return join failure status
+					* not to try driver reconnect
+					*/
+					prAdapter->rWifiVar.
+						rConnSettings.bss = NULL;
+					eNextState = AIS_STATE_JOIN_FAILURE;
+					DBGLOG(AIS, WARN,
+						"Join fail, disconnect-2\n");
+#else
 					/* 4.b send reconnect request */
 					aisFsmInsertRequest(prAdapter,
 						AIS_REQUEST_RECONNECT);
 
 					eNextState = AIS_STATE_IDLE;
+#endif
 				}
 			}
 		}
@@ -4370,6 +4442,9 @@ void aisFsmDisconnect(IN struct ADAPTER *prAdapter,
 		      IN u_int8_t fgDelayIndication)
 {
 	struct BSS_INFO *prAisBssInfo;
+#if (CFG_SUPPORT_NETIF_STOP == 1)
+	struct net_device *prNetDev = NULL;
+#endif
 
 	ASSERT(prAdapter);
 
@@ -4414,15 +4489,25 @@ void aisFsmDisconnect(IN struct ADAPTER *prAdapter,
 						  FALSE, PS_CALLER_NO_TIM);
 		}
 
-		if (prAisBssInfo->ucReasonOfDisconnect ==
-		    DISCONNECT_REASON_CODE_RADIO_LOST) {
+		if ((prAisBssInfo->ucReasonOfDisconnect ==
+			DISCONNECT_REASON_CODE_RADIO_LOST)
+			|| (prAisBssInfo->ucReasonOfDisconnect ==
+			DISCONNECT_REASON_CODE_DEAUTHENTICATED)
+			|| (prAisBssInfo->ucReasonOfDisconnect ==
+			DISCONNECT_REASON_CODE_DISASSOCIATED)
+			|| (prAisBssInfo->ucReasonOfDisconnect ==
+			DISCONNECT_REASON_CODE_NEW_CONNECTION)) {
+
 			scanRemoveBssDescByBssid(prAdapter,
-						 prAisBssInfo->aucBSSID);
+						prAisBssInfo->aucBSSID);
 
 			/* remove from scanning results as well */
 			wlanClearBssInScanningResult(prAdapter,
-						     prAisBssInfo->aucBSSID);
+						prAisBssInfo->aucBSSID);
+		}
 
+		if (prAisBssInfo->ucReasonOfDisconnect ==
+		    DISCONNECT_REASON_CODE_RADIO_LOST) {
 			/* trials for re-association */
 			if (fgDelayIndication) {
 				aisFsmIsRequestPending(prAdapter,
@@ -4459,6 +4544,15 @@ void aisFsmDisconnect(IN struct ADAPTER *prAdapter,
 	    DISCONNECT_REASON_CODE_REASSOCIATION) {
 		aisChangeMediaState(prAdapter, PARAM_MEDIA_STATE_DISCONNECTED);
 
+#if (CFG_SUPPORT_NETIF_STOP == 1)
+	prNetDev = (struct net_device *)wlanGetNetInterfaceByBssIdx(
+				prAdapter->prGlueInfo,
+				prAdapter->prAisBssInfo->ucBssIndex);
+	if (prNetDev != NULL) {
+		netif_tx_stop_all_queues(prNetDev);
+		DBGLOG(AIS, EVENT, "Stop Q\n");
+	}
+#endif
 		/* 4 <4.1> sync. with firmware */
 		nicUpdateBss(prAdapter, prAdapter->prAisBssInfo->ucBssIndex);
 	}
@@ -4640,6 +4734,14 @@ void aisFsmRunEventJoinTimeout(IN struct ADAPTER *prAdapter,
 		/* Support AP Selection */
 		aisAddBlacklist(prAdapter, prAisFsmInfo->prTargetBssDesc);
 		prAisFsmInfo->prTargetBssDesc->ucJoinFailureCount++;
+#if CFG_SUPPORT_CFG80211_AUTH
+		/* join fail, return disconnect
+		* not to try driver reconnect
+		*/
+		prAdapter->rWifiVar.rConnSettings.bss = NULL;
+		eNextState = AIS_STATE_DISCONNECTING;
+		DBGLOG(AIS, WARN, "set rConnSetting.bss = NULL\n");
+#else
 
 		if (prAisFsmInfo->prTargetBssDesc->ucJoinFailureCount <
 		    JOIN_MAX_RETRY_FAILURE_COUNT) {
@@ -4666,14 +4768,12 @@ void aisFsmRunEventJoinTimeout(IN struct ADAPTER *prAdapter,
 			 */
 			eNextState = AIS_STATE_JOIN_FAILURE;
 		}
-
+#endif
 		break;
 
 	case AIS_STATE_NORMAL_TR:
 		/* 1. release channel */
 		aisFsmReleaseCh(prAdapter);
-		prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
-
 		/* 2. process if there is pending scan */
 		if (aisFsmIsRequestPending(prAdapter, AIS_REQUEST_SCAN, TRUE) ==
 		    TRUE) {
@@ -4823,9 +4923,9 @@ void aisFsmScanRequest(IN struct ADAPTER *prAdapter,
 		prScanRequest->ucScanType = SCAN_TYPE_ACTIVE_SCAN;
 		if (prAisFsmInfo->eCurrentState == AIS_STATE_NORMAL_TR) {
 			if (prAisBssInfo->eCurrentOPMode ==
-			    OP_MODE_INFRASTRUCTURE
-			    && prAisFsmInfo->fgIsInfraChannelFinished ==
-			    FALSE) {
+			    OP_MODE_INFRASTRUCTURE &&
+			    timerPendingTimer(&prAisFsmInfo->
+						rJoinTimeoutTimer)) {
 				/* 802.1x might not finished yet, pend it for
 				 * later handling ..
 				 */
@@ -4910,9 +5010,9 @@ aisFsmScanRequestAdv(IN struct ADAPTER *prAdapter,
 
 		if (prAisFsmInfo->eCurrentState == AIS_STATE_NORMAL_TR) {
 			if (prAisBssInfo->eCurrentOPMode ==
-			    OP_MODE_INFRASTRUCTURE
-			    && prAisFsmInfo->fgIsInfraChannelFinished ==
-			    FALSE) {
+			    OP_MODE_INFRASTRUCTURE &&
+			    timerPendingTimer(&prAisFsmInfo->
+						rJoinTimeoutTimer)) {
 				/* 802.1x might not finished yet, pend it for
 				 * later handling ..
 				 */
@@ -5018,9 +5118,7 @@ void aisFsmRunEventChGrant(IN struct ADAPTER *prAdapter,
 				   &prAisFsmInfo->rJoinTimeoutTimer,
 				   prAisFsmInfo->u4ChGrantedInterval -
 				   AIS_JOIN_CH_GRANT_THRESHOLD);
-		/* 3.2 set local variable to indicate join timer is ticking */
-		prAisFsmInfo->fgIsInfraChannelFinished = FALSE;
-
+		DBGLOG(AIS, INFO, "Start JOIN Timer!");
 		/* 3.3 switch to join state */
 		/* Three cases can switch to join state:
 		 ** 1. There's an available PMKSA in wpa_supplicant
@@ -5348,7 +5446,7 @@ void aisFsmRunEventRoamingDiscovery(IN struct ADAPTER *prAdapter,
 	}
 
 	if (prAisFsmInfo->eCurrentState == AIS_STATE_NORMAL_TR
-	    && prAisFsmInfo->fgIsInfraChannelFinished == TRUE) {
+	    && !timerPendingTimer(&prAisFsmInfo->rJoinTimeoutTimer)) {
 		if (eAisRequest == AIS_REQUEST_ROAMING_SEARCH) {
 			prAisFsmInfo->fgTargetChnlScanIssued = TRUE;
 			aisFsmSteps(prAdapter, AIS_STATE_LOOKING_FOR);
@@ -5699,7 +5797,7 @@ void aisFsmRunEventRemainOnChannel(IN struct ADAPTER *prAdapter,
 
 	if ((prAisFsmInfo->eCurrentState == AIS_STATE_IDLE) ||
 	    (prAisFsmInfo->eCurrentState == AIS_STATE_NORMAL_TR
-	     && prAisFsmInfo->fgIsInfraChannelFinished == TRUE)) {
+	     && !timerPendingTimer(&prAisFsmInfo->rJoinTimeoutTimer))) {
 		/* transit to next state */
 		aisFsmSteps(prAdapter, AIS_STATE_REQ_REMAIN_ON_CHANNEL);
 	} else {
@@ -6308,13 +6406,16 @@ void aisFsmRunEventBssTransition(IN struct ADAPTER *prAdapter,
 	struct BSS_TRANSITION_MGT_PARAM_T *prBtmParam =
 	    &prAisSpecificBssInfo->rBTMParam;
 	enum WNM_AIS_BSS_TRANSITION eTransType = BSS_TRANSITION_MAX_NUM;
+#if CFG_SUPPORT_ROAMING
 	struct BSS_DESC *prBssDesc =
 	    prAdapter->rWifiVar.rAisFsmInfo.prTargetBssDesc;
+#endif
 	u_int8_t fgNeedBtmResponse = FALSE;
 	uint8_t ucStatus = BSS_TRANSITION_MGT_STATUS_UNSPECIFIED;
 	uint8_t ucRcvToken = 0;
+#if CFG_SUPPORT_ROAMING
 	static uint8_t aucChnlList[MAXIMUM_OPERATION_CHANNEL_LIST];
-
+#endif
 	if (!prMsg) {
 		DBGLOG(AIS, WARN, "Msg Header is NULL\n");
 		return;
@@ -6324,8 +6425,10 @@ void aisFsmRunEventBssTransition(IN struct ADAPTER *prAdapter,
 	ucRcvToken = prMsg->ucToken;
 
 	DBGLOG(AIS, INFO, "Transition Type: %d\n", eTransType);
+#if CFG_SUPPORT_802_11K
 	aisCollectNeighborAP(prAdapter, prMsg->pucCandList,
 			     prMsg->u2CandListLen, prMsg->ucValidityInterval);
+#endif
 	cnmMemFree(prAdapter, prMsgHdr);
 	/* Solicited BTM request: the case we're waiting btm request
 	 ** after send btm query before roaming scan
@@ -6333,7 +6436,7 @@ void aisFsmRunEventBssTransition(IN struct ADAPTER *prAdapter,
 	if (prBtmParam->ucDialogToken == ucRcvToken) {
 		prBtmParam->fgPendingResponse = fgNeedBtmResponse;
 		prBtmParam->fgUnsolicitedReq = FALSE;
-
+#if CFG_SUPPORT_ROAMING
 		switch (prAdapter->rWifiVar.rRoamingInfo.eCurrentState) {
 		case ROAMING_STATE_REQ_CAND_LIST:
 			roamingFsmSteps(prAdapter, ROAMING_STATE_DISCOVERY);
@@ -6349,6 +6452,7 @@ void aisFsmRunEventBssTransition(IN struct ADAPTER *prAdapter,
 			 */
 			break;
 		}
+#endif
 	}
 	prBtmParam->fgUnsolicitedReq = TRUE;
 	/* Unsolicited BTM request */
@@ -6356,6 +6460,7 @@ void aisFsmRunEventBssTransition(IN struct ADAPTER *prAdapter,
 	case BSS_TRANSITION_DISASSOC:
 		ucStatus = BSS_TRANSITION_MGT_STATUS_ACCEPT;
 		break;
+#if CFG_SUPPORT_ROAMING
 	case BSS_TRANSITION_REQ_ROAMING:
 	{
 		struct NEIGHBOR_AP_T *prNeiAP = NULL;
@@ -6396,11 +6501,14 @@ void aisFsmRunEventBssTransition(IN struct ADAPTER *prAdapter,
 		roamingFsmSteps(prAdapter, ROAMING_STATE_DISCOVERY);
 		return;
 	}
+#endif
 	default:
 		ucStatus = BSS_TRANSITION_MGT_STATUS_ACCEPT;
 		break;
 	}
+#if CFG_SUPPORT_ROAMING
 send_response:
+#endif
 	if (fgNeedBtmResponse && prAdapter->prAisBssInfo &&
 	    prAdapter->prAisBssInfo->prStaRecOfAP) {
 		prBtmParam->ucStatusCode = ucStatus;
@@ -6582,19 +6690,30 @@ void aisPreSuspendFlow(IN struct GLUE_INFO *prGlueInfo)
 	uint32_t u4BufLen;
 	struct AIS_FSM_INFO *prAisFsmInfo;
 	struct MSG_CANCEL_REMAIN_ON_CHANNEL *prMsgChnlAbort;
+#if CFG_SUPPORT_WAKE_ON_PNO
+	struct ADAPTER *prAdapter = prGlueInfo->prAdapter;
+#endif
 
 	GLUE_SPIN_LOCK_DECLARATION();
 
 	/* report scan abort */
 	GLUE_ACQUIRE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
+#if CFG_SUPPORT_WAKE_ON_PNO
+	if (prGlueInfo->prScanRequest &&
+		!prAdapter->prAisBssInfo->fgIsPNOEnable) {
+#else
 	if (prGlueInfo->prScanRequest) {
+#endif
 		kalCfg80211ScanDone(prGlueInfo->prScanRequest, TRUE);
 		prGlueInfo->prScanRequest = NULL;
 	}
 	GLUE_RELEASE_SPIN_LOCK(prGlueInfo, SPIN_LOCK_NET_DEV);
 
 	/* cancel scan */
-	aisFsmStateAbort_SCAN(prGlueInfo->prAdapter);
+#if CFG_SUPPORT_WAKE_ON_PNO
+	if (!prAdapter->prAisBssInfo->fgIsPNOEnable)
+#endif
+		aisFsmStateAbort_SCAN(prGlueInfo->prAdapter);
 
 	DBGLOG(REQ, STATE, "Wow:%d, WowEnable:%d, state:%d\n",
 		prGlueInfo->prAdapter->rWifiVar.ucWow,

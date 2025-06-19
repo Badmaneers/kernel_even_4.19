@@ -582,7 +582,7 @@ int mtk_pci_resume(struct pci_dev *pdev)
 	wlanResumePmHandle(prGlueInfo);
 
 	/* Allow upper layers to call the device hard_start_xmit routine. */
-	netif_tx_start_all_queues(prGlueInfo->prDevHandler);
+	netif_tx_wake_all_queues(prGlueInfo->prDevHandler);
 
 	RECLAIM_POWER_CONTROL_TO_PM(prGlueInfo->prAdapter, FALSE);
 	DBGLOG(HAL, STATE, "mtk_pci_resume() done!\n");

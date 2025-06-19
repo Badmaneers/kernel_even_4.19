@@ -501,7 +501,7 @@ TdlsDataFrameSend_TearDown(struct ADAPTER *prAdapter,
 	/* 1. 802.3 header */
 	kalMemCopy(pPkt, pPeerMac, TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
-	kalMemCopy(pPkt, prAdapter->rMyMacAddr,
+	kalMemCopy(pPkt, prBssInfo->aucOwnMacAddr,
 		   TDLS_FME_MAC_ADDR_LEN);
 	pPkt += TDLS_FME_MAC_ADDR_LEN;
 	*(uint16_t *) pPkt = htons(TDLS_FRM_PROT_TYPE);
@@ -558,7 +558,7 @@ TdlsDataFrameSend_TearDown(struct ADAPTER *prAdapter,
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID,
 		   prBssInfo->aucBSSID, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
-		   prAdapter->rMyMacAddr, 6);
+		   prBssInfo->aucOwnMacAddr, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
 		   pPeerMac, 6);
 
@@ -760,7 +760,7 @@ TdlsDataFrameSend_SETUP_REQ(struct ADAPTER *prAdapter,
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID,
 		prBssInfo->aucBSSID, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
-		prAdapter->rMyMacAddr, 6);
+		prBssInfo->aucOwnMacAddr, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
 		pPeerMac, 6);
 
@@ -947,7 +947,7 @@ TdlsDataFrameSend_SETUP_RSP(struct ADAPTER *prAdapter,
 		kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
 			   pPeerMac, 6);
 		kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
-			   prAdapter->rMyMacAddr, 6);
+			   prBssInfo->aucOwnMacAddr, 6);
 
 		u4IeLen = IE_SIZE(pPkt);
 		LR_TDLS_FME_FIELD_FILL(u4IeLen);
@@ -1078,7 +1078,7 @@ TdlsDataFrameSend_CONFIRM(struct ADAPTER *prAdapter,
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aBSSID,
 		prBssInfo->aucBSSID, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
-		prAdapter->rMyMacAddr, 6);
+		prBssInfo->aucOwnMacAddr, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
 		pPeerMac, 6);
 
@@ -1356,7 +1356,7 @@ TdlsDataFrameSend_DISCOVERY_RSP(struct ADAPTER *prAdapter,
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aInitiator,
 		   pPeerMac, 6);
 	kalMemCopy(TDLS_LINK_IDENTIFIER_IE(pPkt)->aResponder,
-		   prAdapter->rMyMacAddr, 6);
+		   prBssInfo->aucOwnMacAddr, 6);
 
 	u4IeLen = IE_SIZE(pPkt);
 	LR_TDLS_FME_FIELD_FILL(u4IeLen);

@@ -104,9 +104,10 @@
 #define CIPHER_SUITE_WEP128             7
 #define CIPHER_SUITE_WPI                8
 #define CIPHER_SUITE_CCMP_W_CCX         9
-#define CIPHER_SUITE_GCMP               10
+#define CIPHER_SUITE_CCMP_256           10
 #define CIPHER_SUITE_GCMP_128           11
 #define CIPHER_SUITE_GCMP_256           12
+#define CIPHER_SUITE_GCM_WPI_128        13
 
 /* Todo:: Move to register */
 #if defined(MT6630)
@@ -280,6 +281,9 @@ void secHandleRxEapolPacket(IN struct ADAPTER *prAdapter,
 void secHandleEapolTxStatus(IN struct ADAPTER *prAdapter,
 			    IN struct MSDU_INFO *prMsduInfo,
 			    IN enum ENUM_TX_RESULT_CODE rTxDoneStatus);
+
+void secHandleNoWtbl(IN struct ADAPTER *prAdapter,
+	IN struct SW_RFB *prSwRfb);
 
 /*******************************************************************************
  *                              F U N C T I O N S

@@ -959,6 +959,14 @@ do { \
 
 #endif
 
+#if CFG_SDIO_RX_DE_AGG_IN_THREAD
+#define HAL_DE_AGG_RX_PKTPROC(_prAdapter, prRxBuf) \
+{ \
+	halDeAggRxPktProc(_prAdapter, \
+			prRxBuf);\
+}
+#endif
+
 #endif
 
 #if defined(_HIF_USB)
@@ -1134,6 +1142,13 @@ do { \
 
 #define HAL_AGG_KICK_DATA(_prAdapter)
 
+#define HAL_CANCEL_TX_RX(_prAdapter)    \
+{ \
+	nicSerStopTxRx(_prAdapter); \
+	halTxCancelAllSending(_prAdapter);\
+	halDisableInterrupt(_prAdapter);\
+}
+
 #endif
 
 #define INVALID_VERSION 0xFFFF /* used by HW/FW version */
@@ -1181,8 +1196,6 @@ void halProcessAbnormalInterrupt(IN struct ADAPTER *prAdapter);
 void halProcessSoftwareInterrupt(IN struct ADAPTER *prAdapter);
 /* Hif power off wifi */
 uint32_t halHifPowerOffWifi(IN struct ADAPTER *prAdapter);
-
-
 bool halHifSwInfoInit(IN struct ADAPTER *prAdapter);
 void halRxProcessMsduReport(IN struct ADAPTER *prAdapter,
 	IN OUT struct SW_RFB *prSwRfb);

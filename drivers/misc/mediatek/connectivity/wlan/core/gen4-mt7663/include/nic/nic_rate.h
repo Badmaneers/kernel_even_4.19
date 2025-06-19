@@ -151,6 +151,10 @@ nicGetRateIndexFromRateSetWithLimit(
 	OUT uint8_t *pucRateSwIndex
 );
 
+uint16_t
+nicRateInfo2RateCode(IN uint32_t  u4TxMode,
+	IN uint32_t  u4Rate);
+
 /*******************************************************************************
  *                              F U N C T I O N S
  *******************************************************************************

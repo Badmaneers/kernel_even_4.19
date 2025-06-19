@@ -155,6 +155,9 @@ VOID rsnGenerateWPAIE(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo);
 
 VOID rsnGenerateRSNIE(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo);
 
+VOID rsnGenerateRSNXIE(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo);
+
+
 BOOLEAN
 rsnParseCheckForWFAInfoElem(IN P_ADAPTER_T prAdapter,
 			    IN PUINT_8 pucBuf, OUT PUINT_8 pucOuiType, OUT PUINT_16 pu2SubTypeVersion);

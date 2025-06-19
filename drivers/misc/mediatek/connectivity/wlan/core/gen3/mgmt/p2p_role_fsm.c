@@ -791,6 +791,13 @@ VOID p2pRoleFsmRunEventStartAP(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr
 			prP2pConnReqInfo->eConnRequest = P2P_CONNECTION_TYPE_GO;
 		}
 
+		/*clear list to ensure no client staRec*/
+		if (bssGetClientCount(prAdapter, prP2pBssInfo) != 0) {
+			DBGLOG(P2P, WARN,
+				"Clear list to ensure no empty/client staRec\n");
+			bssInitializeClientList(prAdapter, prP2pBssInfo);
+		}
+
 		prP2pBssInfo->eHiddenSsidType = prP2pStartAPMsg->eHiddenSsidType;
 
 		if ((prP2pBssInfo->eCurrentOPMode != OP_MODE_ACCESS_POINT) ||
@@ -1490,8 +1497,9 @@ p2pRoleFsmRunEventChnlGrant(IN P_ADAPTER_T prAdapter,
 				break;
 			}
 		} else {
-			/* Channel requsted, but released. */
-			ASSERT(!prChnlReqInfo->fgIsChannelRequested);
+			DBGLOG(P2P, ERROR,
+				"p2pRoleFsmRunEventChnlGrant: Token mismatch, Chreq: %d, ChGrant: %d\n",
+				prChnlReqInfo->ucSeqNumOfChReq, ucTokenID);
 		}
 
 	} while (FALSE);
@@ -1664,6 +1672,9 @@ VOID p2pFsmRunEventBeaconUpdate(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHd
 		prBcnUpdateMsg = (P_MSG_P2P_BEACON_UPDATE_T) prMsgHdr;
 
 		prRoleP2pFsmInfo = P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter, prBcnUpdateMsg->ucRoleIndex);
+
+		if (prRoleP2pFsmInfo == NULL)
+			break;
 
 		prP2pBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, prRoleP2pFsmInfo->ucBssIndex);
 

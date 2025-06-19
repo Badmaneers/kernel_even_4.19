@@ -178,10 +178,6 @@ extern char *HW_TX_RATE_BW[];
 #if CFG_WOW_SUPPORT
 #define PRIV_CMD_SET_WOW_ENABLE			34
 #define PRIV_CMD_SET_WOW_PAR			35
-#define MDNS_CMD_ENABLE					1
-#define MDNS_CMD_DISABLE				2
-#define MDNS_CMD_ADD_RECORD				3
-#define MDNS_CMD_DEL_RECORD				4
 #endif
 
 #define PRIV_CMD_SET_SER                37
@@ -317,6 +313,9 @@ extern char *HW_TX_RATE_BW[];
 #define CMD_GET_DEWEIGHTING_NOISE	"GET_DEWEIGHTING_NOISE"
 #define CMD_GET_DEWEIGHTING_WEIGHT	"GET_DEWEIGHTING_WEIGHT"
 #endif /* CFG_ENABLE_DEWEIGHTING_CTRL */
+#if CFG_SUPPORT_EXT_PTA_DEBUG_COMMAND
+#define CMD_EXT_PTA_CFG      "EXT_PTA_CONFIG"
+#endif
 
 enum {
 	CMD_ADVCTL_NOISE_ID = 1,
@@ -390,8 +389,12 @@ enum {
 #define VAR_BT_PROF_INQUIRY        0x0020
 #define VAR_BT_PROF_ESCO           0x0040
 #define VAR_BT_PROF_MULTI_HID      0x0080
-#define VAR_BT_PROF_BLE_VOBLE      0x0200
-#define VAR_BT_PROF_BT_A2DP_SINK   0x0400
+#define VAR_BT_PROF_BLE_SCAN       0x0100
+#define VAR_BT_PROF_ADV            0x0200
+#define VAR_BT_PROF_ADV_DIRECT     0x0400
+#define VAR_BT_PROF_A2DP_SINK      0x0800
+#define VAR_BT_PROF_PAN            0x1000
+
 
 #define COEX_BCM_IS_BT_NONE(x) \
 (((x) & VAR_BT_PROF_MASK_ALL) == VAR_BT_PROF_NONE)
@@ -403,9 +406,33 @@ enum {
 #define COEX_BCM_IS_BT_INQUIRY(x) ((x) & VAR_BT_PROF_INQUIRY)
 #define COEX_BCM_IS_BT_ESCO(x) ((x) & VAR_BT_PROF_ESCO)
 #define COEX_BCM_IS_BT_MULTI_HID(x) ((x) & VAR_BT_PROF_MULTI_HID)
-#define COEX_BCM_IS_BT_BLE_VOBLE(x) ((x) & VAR_BT_PROF_BLE_VOBLE)
-#define COEX_BCM_IS_BT_A2DP_SINK(x) ((x) & VAR_BT_PROF_BT_A2DP_SINK)
+#define COEX_BCM_IS_BT_BLE_SCAN(x) ((x) & VAR_BT_PROF_BLE_SCAN)
+#define COEX_BCM_IS_BT_ADV(x) ((x) & VAR_BT_PROF_ADV)
+#define COEX_BCM_IS_BT_ADV_DIRECT(x) ((x) & VAR_BT_PROF_ADV_DIRECT)
+#define COEX_BCM_IS_BT_A2DP_SINK(x) ((x) & VAR_BT_PROF_A2DP_SINK)
+#define COEX_BCM_IS_BT_PAN(x) ((x) & VAR_BT_PROF_PAN)
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+extern struct sock *nl_sk;
+#define EV_WLAN_MULTIAP_START \
+	((0xA000 | 0x200) + 0x50)
+#define EV_WLAN_MULTIAP_BSS_METRICS_RESPONSE \
+	(EV_WLAN_MULTIAP_START + 0x09)
+#define EV_WLAN_MULTIAP_STA_TOPOLOGY_NOTIFY \
+	(EV_WLAN_MULTIAP_START + 0x08)
+#define EV_WLAN_MULTIAP_ASSOC_STA_METRICS_RESPONSE \
+	(EV_WLAN_MULTIAP_START + 0x0a)
+#define EV_WLAN_MULTIAP_UNASSOC_STA_METRICS_RESPONSE \
+	(EV_WLAN_MULTIAP_START + 0x0b)
+#define EV_WLAN_MULTIAP_BEACON_METRICS_RESPONSE \
+	(EV_WLAN_MULTIAP_START + 0x0c)
+#define EV_WLAN_MULTIAP_STEERING_BTM_REPORT \
+	(EV_WLAN_MULTIAP_START + 0x0d)
+#define EV_WLAN_MULTIAP_TOPOLOGY_RESPONSE \
+	(EV_WLAN_MULTIAP_START + 0x0e)
+#define EV_WLAN_MULTIAP_BSS_STATUS_REPORT \
+	(EV_WLAN_MULTIAP_START + 0x0f)
+#endif /*CFG_CCN7_SAP_EASYMESH*/
 /*******************************************************************************
  *                             D A T A   T Y P E S
  *******************************************************************************
@@ -579,6 +606,11 @@ IN OUT struct ifreq *prReq, IN int i4Cmd);
 int32_t priv_driver_cmds(IN struct net_device *prNetDev,
 			 IN int8_t *pcCommand, IN int32_t i4TotalLen);
 
+#if CFG_SUPPORT_MDNS_OFFLOAD
+int priv_support_mdns_offload(IN struct net_device *prDev,
+				IN OUT struct ifreq *prReq, IN int i4Cmd);
+#endif
+
 int priv_driver_set_cfg(IN struct net_device *prNetDev,
 			IN char *pcCommand, IN int i4TotalLen);
 
@@ -590,6 +622,11 @@ priv_ate_set(IN struct net_device *prNetDev,
 #endif
 
 char *hw_rate_ofdm_str(uint16_t ofdm_idx);
+
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+int32_t MontorSendMsg(IN uint16_t msgtype,
+	IN void *pvmsgbuf, IN int32_t i4TotalLen);
+#endif /* CFG_CCN7_SAP_EASYMESH */
 
 /*******************************************************************************
  *                              F U N C T I O N S

@@ -354,6 +354,11 @@ u_int8_t kalP2PSetBlackList(IN struct GLUE_INFO *prGlueInfo,
 		IN u_int8_t fgIsblock,
 		IN uint8_t ucRoleIndex);
 
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+void kalP2PCatBlackList(IN struct GLUE_INFO *prGlueInfo,
+		IN bool flag);
+#endif
+
 u_int8_t kalP2PCmpBlackList(IN struct GLUE_INFO *prGlueInfo,
 		IN uint8_t rbssid[PARAM_MAC_ADDR_LEN],
 		IN uint8_t ucRoleIndex);
@@ -372,5 +377,13 @@ void kalP2pUnlinkBss(IN struct GLUE_INFO *prGlueInfo, IN uint8_t aucBSSID[]);
 
 void kalP2pIndicateQueuedMgmtFrame(IN struct GLUE_INFO *prGlueInfo,
 		IN struct P2P_QUEUED_ACTION_FRAME *prFrame);
+
+void kalP2pIndicateAcsResult(IN struct GLUE_INFO *prGlueInfo,
+		IN uint8_t ucRoleIndex,
+		IN uint8_t ucPrimaryCh,
+		IN uint8_t ucSecondCh,
+		IN uint8_t ucSeg0Ch,
+		IN uint8_t ucSeg1Ch,
+		IN enum ENUM_MAX_BANDWIDTH_SETTING eChnlBw);
 
 #endif /* _GL_P2P_KAL_H */

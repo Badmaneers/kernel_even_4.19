@@ -532,10 +532,15 @@ uint32_t nicProcessIST(IN struct ADAPTER *prAdapter)
 		nicProcessIST_impl(prAdapter, u4IntStatus);
 
 		/* Have to TX now. Skip RX polling ASAP */
-		if (test_bit(GLUE_FLAG_HIF_TX_CMD_BIT,
+		if (
+#if CFG_SUPPORT_TPENHANCE_MODE
+			!((WHISR_RX0_DONE_INT | WHISR_RX1_DONE_INT) &
+				u4IntStatus) &&
+#endif
+			(test_bit(GLUE_FLAG_HIF_TX_CMD_BIT,
 				&prAdapter->prGlueInfo->ulFlag)
 			|| test_bit(GLUE_FLAG_HIF_TX_BIT,
-				&prAdapter->prGlueInfo->ulFlag)) {
+				&prAdapter->prGlueInfo->ulFlag))) {
 			i *= 2;
 		}
 	}
@@ -4713,6 +4718,10 @@ void nicSerSyncTimerHandler(IN struct ADAPTER *prAdapter,
 	int ret = 0;
 	uint16_t u2SerState;
 
+	if (prAdapter->prGlueInfo->rHifInfo.state == USB_STATE_SUSPEND) {
+		DBGLOG(INIT, WARN,"USB is Suspend. Stop access USB\n");
+		goto bypass;
+	}
 	/* get N9 SER state */
 	ret = HAL_WIFI_FUNC_GET_SER_STATE(prAdapter, &u2SerState);
 
@@ -4725,6 +4734,8 @@ void nicSerSyncTimerHandler(IN struct ADAPTER *prAdapter,
 		break;
 
 	case ENUM_SER_STATE_ERR_DET:
+		if (prAdapter->chip_info->asicDumpSerDummyCR)
+			prAdapter->chip_info->asicDumpSerDummyCR(prAdapter);
 
 		/* Stop upper layers calling the device hard_start_xmit
 		 * routine.

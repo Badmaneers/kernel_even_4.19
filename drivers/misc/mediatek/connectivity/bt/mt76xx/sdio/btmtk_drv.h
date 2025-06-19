@@ -42,7 +42,6 @@
 #define E2P_MODE			"EfuseBufferModeCal"
 #define E2P_ACCESS_EPA			"BtUseExternalPA"
 #define E2P_ACCESS_DUPLEX		"BtDuplexMode"
-#define TX_PWR_LIMIT			"BtTxPwrLimit.bin"
 #define KEEP_FULL_PWR			"KeepFullPwr"
 #define PWR_KEEP_NO_FW_OWN		'1'
 #define PWR_SWITCH_DRIVER_FW_OWN	'0'

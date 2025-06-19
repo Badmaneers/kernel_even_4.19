@@ -954,10 +954,24 @@ VOID mqmHandleBaActionFrame(P_ADAPTER_T prAdapter, P_SW_RFB_T prSwRfb);
 
 VOID qmResetTcControlResource(IN P_ADAPTER_T prAdapter);
 
+#if (CFG_SUPPORT_REPLAY_DETECTION || CFG_SUPPORT_FRAG_ATTACK_DETECTION)
+#define CCMPTSCPNNUM	6
+u_int8_t qmRxPNtoU64(uint8_t *pucPN, uint8_t uPNNum, uint64_t *pu64Rets);
+#endif
+
 #if CFG_SUPPORT_REPLAY_DETECTION
 BOOLEAN qmHandleRxReplay(P_ADAPTER_T prAdapter, P_SW_RFB_T prSwRfb);
 BOOLEAN qmRxDetectReplay(PUINT_8 pucPNS, PUINT_8 pucPNT);
 #endif
+
+#if CFG_SUPPORT_FAKE_EAPOL_DETECTION
+u_int8_t qmDetectRxInvalidEAPOL(P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb);
+#endif /* CFG_SUPPORT_FAKE_EAPOL_DETECTION */
+
+#if CFG_SUPPORT_AMSDU_ATTACK_DETECTION
+u_int8_t qmAmsduAttackDetection(IN P_ADAPTER_T prAdapter,
+	IN P_SW_RFB_T prSwRfb);
+#endif /* CFG_SUPPORT_AMSDU_ATTACK_DETECTION */
 
 /*******************************************************************************
  *                              F U N C T I O N S

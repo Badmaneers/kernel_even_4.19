@@ -152,7 +152,7 @@ static const struct TX_TC_TRAFFIC_SETTING
 
 	/* non-StaRec frame (BMC, etc...) */
 	{
-		NIC_TX_DESC_LONG_FORMAT_LENGTH, TX_DESC_TX_TIME_NO_LIMIT,
+		NIC_TX_DESC_LONG_FORMAT_LENGTH, NIC_TX_BMC_REMAINING_TX_TIME,
 		NIC_TX_DATA_DEFAULT_RETRY_COUNT_LIMIT
 	},
 };
@@ -2489,17 +2489,6 @@ uint32_t nicTxCmd(IN struct ADAPTER *prAdapter,
 		prCmdInfo->pucTxp = prMsduInfo->prPacket;
 		prCmdInfo->u4TxpLen = prMsduInfo->u2FrameLength;
 
-		HAL_WRITE_TX_CMD(prAdapter, prCmdInfo, ucTC);
-		/* <4> Management Frame Post-Processing */
-		GLUE_DEC_REF_CNT(prTxCtrl->i4TxMgmtPendingNum);
-
-		DBGLOG(INIT, TRACE,
-		       "TX MGMT Frame: BSS[%u] WIDX:PID[%u:%u] SEQ[%u] STA[%u] RSP[%u]\n",
-		       prMsduInfo->ucBssIndex, prMsduInfo->ucWlanIndex,
-		       prMsduInfo->ucPID,
-		       prMsduInfo->ucTxSeqNum, prMsduInfo->ucStaRecIndex,
-		       prMsduInfo->pfTxDoneHandler ? TRUE : FALSE);
-
 		if (prMsduInfo->pfTxDoneHandler) {
 			KAL_ACQUIRE_SPIN_LOCK(prAdapter,
 				SPIN_LOCK_TXING_MGMT_LIST);
@@ -2507,7 +2496,23 @@ uint32_t nicTxCmd(IN struct ADAPTER *prAdapter,
 					  (struct QUE_ENTRY *) prMsduInfo);
 			KAL_RELEASE_SPIN_LOCK(prAdapter,
 				SPIN_LOCK_TXING_MGMT_LIST);
-		} else {
+			DBGLOG(TX, INFO, "Insert msdu WIDX:PID[%u:%u]\n",
+				prMsduInfo->ucWlanIndex, prMsduInfo->ucPID);
+		}
+
+		DBGLOG(INIT, TRACE,
+		"TX MGMT Frame: BSS[%u] WIDX:PID[%u:%u] SEQ[%u] STA[%u] RSP[%u]\n",
+		prMsduInfo->ucBssIndex, prMsduInfo->ucWlanIndex,
+		prMsduInfo->ucPID,
+		prMsduInfo->ucTxSeqNum,
+		prMsduInfo->ucStaRecIndex,
+		prMsduInfo->pfTxDoneHandler ? TRUE : FALSE);
+
+		HAL_WRITE_TX_CMD(prAdapter, prCmdInfo, ucTC);
+		/* <4> Management Frame Post-Processing */
+		GLUE_DEC_REF_CNT(prTxCtrl->i4TxMgmtPendingNum);
+
+		if (prMsduInfo->pfTxDoneHandler == NULL) {
 			cnmMgtPktFree(prAdapter, prMsduInfo);
 		}
 
@@ -4318,6 +4323,21 @@ uint32_t nicTxGetMaxPageCntPerFrame(IN struct ADAPTER
 		 NIC_TX_MAX_SIZE_PER_FRAME + page_size - 1) / page_size);
 }
 
+#if (CFG_SUPPORT_TX_TSO_SW == 1)
+void nicTxSwTsoClearSkbQ(IN struct ADAPTER *prAdapter)
+{
+	struct sk_buff *prSkb;
+
+	while (TRUE) {
+		prSkb = skb_dequeue(&prAdapter->rTsoQueue);
+		if (prSkb == NULL)
+			break;
+		dev_kfree_skb_any(prSkb);
+		GLUE_DEC_REF_CNT(prAdapter->u4TsoQueueCnt);
+	}
+}
+#endif
+
 /* TX Direct functions : BEGIN */
 
 /*----------------------------------------------------------------------------*/
@@ -4799,6 +4819,10 @@ static uint32_t nicTxDirectStartXmitMain(struct sk_buff
 					prAdapter, prMsduInfo);
 			break;
 		}
+
+		/* BMC pkt need limited rate according to coex report*/
+		if (prMsduInfo->ucStaRecIndex == STA_REC_INDEX_BMCAST)
+			nicTxSetPktLowestFixedRate(prAdapter, prMsduInfo);
 
 		nicTxFillDataDesc(prAdapter, prMsduInfo);
 

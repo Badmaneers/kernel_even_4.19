@@ -193,6 +193,10 @@ VOID scnInit(IN P_ADAPTER_T prAdapter)
 
 	/* reset NLO state */
 	prScanInfo->fgNloScanning = FALSE;
+
+#if CFG_SUPPORT_SCHED_SCAN
+	prScanInfo->fgIsSchedScanning = FALSE;
+#endif
 }				/* end of scnInit() */
 
 VOID scnFreeAllPendingScanRquests(IN P_ADAPTER_T prAdapter)
@@ -678,11 +682,13 @@ scanSearchExistingBssDescWithSsid(IN P_ADAPTER_T prAdapter,
 	case BSS_TYPE_P2P_DEVICE:
 		fgCheckSsid = FALSE;
 		/* fall through */
+		/* FALLTHRU */
 	case BSS_TYPE_INFRASTRUCTURE:
 #if CFG_SUPPORT_ROAMING_SKIP_ONE_AP
 		scanSearchBssDescOfRoamSsid(prAdapter);
 		/* fall through */
 #endif
+		/* FALLTHRU */
 	case BSS_TYPE_BOW_DEVICE:
 		prBssDesc = scanSearchBssDescByBssidAndSsid(prAdapter, aucBSSID, fgCheckSsid, prSsid);
 
@@ -1121,6 +1127,41 @@ VOID scanRemoveConnFlagOfBssDescByBssid(IN P_ADAPTER_T prAdapter, IN UINT_8 aucB
 
 /*----------------------------------------------------------------------------*/
 /*!
+* @brief Delete All BSS Descriptors from current list.
+*
+* @param[in] prAdapter  Pointer to the Adapter structure.
+*
+* @return (none)
+*/
+/*----------------------------------------------------------------------------*/
+VOID scanRemoveAllBssDesc(IN P_ADAPTER_T prAdapter)
+{
+	P_SCAN_INFO_T prScanInfo;
+	P_LINK_T prBSSDescList;
+	P_LINK_T prFreeBSSDescList;
+	P_BSS_DESC_T prBssDesc = (P_BSS_DESC_T) NULL;
+	P_BSS_DESC_T prBSSDescNext;
+
+	ASSERT(prAdapter);
+
+	prScanInfo = &(prAdapter->rWifiVar.rScanInfo);
+	prBSSDescList = &prScanInfo->rBSSDescList;
+	prFreeBSSDescList = &prScanInfo->rFreeBSSDescList;
+
+	/* Check if such BSS Descriptor exists in a valid list */
+	LINK_FOR_EACH_ENTRY_SAFE(prBssDesc, prBSSDescNext, prBSSDescList,
+		rLinkEntry, BSS_DESC_T) {
+
+		/* Remove this BSS Desc from the BSS Desc list */
+		LINK_REMOVE_KNOWN_ENTRY(prBSSDescList, prBssDesc);
+
+		/* Return this BSS Desc to the free BSS Desc list. */
+		LINK_INSERT_TAIL(prFreeBSSDescList, &prBssDesc->rLinkEntry);
+	}
+}				/* end of scanRemoveAllBssDesc() */
+
+/*----------------------------------------------------------------------------*/
+/*!
 * @brief Allocate new BSS_DESC_T
 *
 * @param[in] prAdapter          Pointer to the Adapter structure.
@@ -1201,8 +1242,20 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 	UINT_8 ucSSIDChar;
 	/* PUINT_8 pucDumpIE; */
 
+	P_HW_MAC_RX_DESC_T prRxStatus;
+
 	ASSERT(prAdapter);
 	ASSERT(prSwRfb);
+
+	prRxStatus = prSwRfb->prRxStatus;
+	ASSERT(prRxStatus);
+
+	if (prAdapter->fg5gDisable == TRUE
+			&& HAL_RX_STATUS_GET_RF_BAND(prRxStatus) == BAND_5G) {
+		DBGLOG(SCN, INFO,
+			"disable 5g so do not add 5g in scan list\n");
+		return NULL;
+	}
 
 	prWlanBeaconFrame = (P_WLAN_BEACON_FRAME_T) prSwRfb->pvHeader;
 
@@ -1293,6 +1346,21 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 		fgIsNewBssDesc = TRUE;
 
 		do {
+			if (!fgIsValidSsid) {
+				prBssDesc = scanSearchBssDescByBssid(prAdapter,
+					(PUINT_8)prWlanBeaconFrame->aucBSSID);
+				if (prBssDesc == (P_BSS_DESC_T) NULL) {
+					DBGLOG(SCN, INFO,
+						"ignore hidden BSS(%pM) now\n",
+					(PUINT_8)prWlanBeaconFrame->aucBSSID);
+					return NULL;
+				}
+				DBGLOG(SCN, INFO,
+					"ssid is empty, don't update hidden BSS(%pM) now\n",
+					(PUINT_8)prWlanBeaconFrame->aucBSSID);
+				return prBssDesc;
+			}
+
 			/* 4 <1.2.1> First trial of allocation */
 			prBssDesc = scanAllocateBssDesc(prAdapter);
 			if (prBssDesc)
@@ -1374,6 +1442,12 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 				return NULL;
 
 			/* restore */
+			if (fgIsConnected) {
+				prAdapter->
+					rWifiVar.rAisFsmInfo.prTargetBssDesc =
+					prBssDesc;
+				DBGLOG(SCN, WARN, "Update prTargetBssDesc!\n");
+			}
 			prBssDesc->fgIsConnected = fgIsConnected;
 			prBssDesc->fgIsConnecting = fgIsConnecting;
 		}
@@ -1543,6 +1617,11 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 
 			break;
 		case ELEM_ID_VHT_CAP:
+			/* Error handling */
+			if (IE_LEN(pucIE) !=
+				(sizeof(IE_VHT_CAP_T) - 2))
+				break;
+
 			prBssDesc->fgIsVHTPresent = TRUE;
 #if CFG_SUPPORT_BFEE
 			prBssDesc->ucVhtCapNumSoundingDimensions =
@@ -1738,8 +1817,9 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 		if (prBssDesc->fgIsHTPresent)
 			prBssDesc->ucPhyTypeSet |= PHY_TYPE_BIT_HT;
 
-		/* if not 11n only */
-		if (!(prBssDesc->u2BSSBasicRateSet & RATE_SET_BIT_HT_PHY)) {
+		/* if not 11n only or support OFDM*/
+		if (!(prBssDesc->u2BSSBasicRateSet & RATE_SET_BIT_HT_PHY)
+			|| (prBssDesc->u2BSSBasicRateSet & RATE_SET_OFDM)) {
 			/* Support 11a definitely */
 			prBssDesc->ucPhyTypeSet |= PHY_TYPE_BIT_OFDM;
 
@@ -1996,7 +2076,11 @@ WLAN_STATUS scanProcessBeaconAndProbeResp(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_
 		/* 4 <3> Send SW_RFB_T to HIF when we perform SCAN for HOST */
 		if (prBssDesc->eBSSType == BSS_TYPE_INFRASTRUCTURE || prBssDesc->eBSSType == BSS_TYPE_IBSS) {
 			/* for AIS, send to host */
-			if (prConnSettings->fgIsScanReqIssued) {
+			if (prConnSettings->fgIsScanReqIssued
+#if CFG_SUPPORT_SCHED_SCAN
+				|| prScanInfo->fgIsSchedScanning
+#endif
+				) {
 				BOOLEAN fgAddToScanResult;
 
 				fgAddToScanResult = scanCheckBssIsLegal(prAdapter, prBssDesc);

@@ -3066,7 +3066,7 @@ void nicCmdEventQueryLteSafeChn(IN struct ADAPTER
 		/* Statistics from FW is valid */
 		if (prEvent->u4Flags & BIT(0)) {
 			for (ucIdx = 0;
-			     ucIdx < NL80211_TESTMODE_AVAILABLE_CHAN_ATTR_MAX;
+			     ucIdx < ENUM_SAFE_CH_MASK_MAX_NUM;
 					ucIdx++) {
 				prLteSafeChnInfo->rLteSafeChnList.
 				au4SafeChannelBitmask[ucIdx]
@@ -3179,6 +3179,11 @@ void nicCmdEventQueryWlanInfo(IN struct ADAPTER *prAdapter,
 	struct EVENT_WLAN_INFO *prEventWlanInfo;
 	struct GLUE_INFO *prGlueInfo;
 	uint32_t u4QueryInfoLen;
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+	uint8_t ucRoleIdx = 0;
+	uint8_t ucBssIdx = 0;
+	struct STA_RECORD *prStaRec;
+#endif
 
 	ASSERT(prAdapter);
 	ASSERT(prCmdInfo);
@@ -3222,6 +3227,24 @@ void nicCmdEventQueryWlanInfo(IN struct ADAPTER *prAdapter,
 	}
 
 	if (prCmdInfo->fgIsOid) {
+#if IS_ENABLED(CFG_CCN7_SAP_EASYMESH)
+		if (mtk_Netdev_To_RoleIdx(prGlueInfo,
+			prGlueInfo->prP2PInfo[1]->prDevHandler,
+			&ucRoleIdx) == 0) {
+			if (p2pFuncRoleToBssIdx(prGlueInfo->prAdapter,
+				ucRoleIdx,
+				&ucBssIdx) == WLAN_STATUS_SUCCESS) {
+				prStaRec = cnmGetStaRecByAddress(prAdapter,
+					ucBssIdx,
+					prWlanInfo->rWtblTxConfig.aucPA);
+				if (prStaRec)
+					prStaRec->u8GetDataRateTime =
+					kalGetTimeTick();
+			} else
+				DBGLOG(INIT, ERROR, "get ucBssIdx fail\n");
+		} else
+			DBGLOG(INIT, ERROR, "get ucRoleIdx fail\n");
+#endif
 		kalOidComplete(prGlueInfo, prCmdInfo->fgSetQuery,
 			       u4QueryInfoLen, WLAN_STATUS_SUCCESS);
 	}
@@ -3640,7 +3663,7 @@ void nicCmdEventQueryTxPowerInfo(IN struct ADAPTER *prAdapter,
 			NULL;
 	struct PARAM_TXPOWER_ALL_RATE_POWER_INFO_T *prTxPowerInfo =
 			NULL;
-	uint32_t u4QueryInfoLen;
+	uint32_t u4QueryInfoLen = 0;
 	struct GLUE_INFO *prGlueInfo = NULL;
 
 	if (!prAdapter)

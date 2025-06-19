@@ -1349,7 +1349,7 @@ void cnmIdcDetectHandler(IN struct ADAPTER *prAdapter,
 	/* Statistics from FW is valid */
 	if (prEventBody->u4Flags & BIT(0)) {
 		for (ucIdx = 0;
-			ucIdx < NL80211_TESTMODE_AVAILABLE_CHAN_ATTR_MAX;
+			ucIdx < ENUM_SAFE_CH_MASK_MAX_NUM;
 				ucIdx++) {
 			g_rLteSafeChInfo.rLteSafeChn.
 				au4SafeChannelBitmask[ucIdx]
@@ -3456,7 +3456,6 @@ void cnmCheckPendingTimer(IN struct ADAPTER *prAdapter)
 			&prAisFsmInfo->rJoinTimeoutTimer);
 		/* Release Channel */
 		aisFsmReleaseCh(prAdapter);
-		prAisFsmInfo->fgIsInfraChannelFinished = TRUE;
 	}
 }
 

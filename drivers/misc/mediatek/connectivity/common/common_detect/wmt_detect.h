@@ -55,12 +55,12 @@ extern int gWmtDetectDbgLvl;
 #define WMT_DETECT_PR_LOUD(fmt, arg...) \
 do { \
 	if (gWmtDetectDbgLvl >= WMT_DETECT_LOG_LOUD) \
-		pr_debug(DFT_TAG"[L]%s:"  fmt, __func__, ##arg); \
+		pr_info(DFT_TAG"[L]%s:"  fmt, __func__, ##arg); \
 } while (0)
 #define WMT_DETECT_PR_DBG(fmt, arg...) \
 do { \
 	if (gWmtDetectDbgLvl >= WMT_DETECT_LOG_DBG) \
-		pr_debug(DFT_TAG"[D]%s:"  fmt, __func__, ##arg); \
+		pr_info(DFT_TAG"[D]%s:"  fmt, __func__, ##arg); \
 } while (0)
 #define WMT_DETECT_PR_INFO(fmt, arg...) \
 do { \
@@ -89,6 +89,7 @@ do { \
 #define COMBO_IOCTL_EXT_CHIP_PWR_OFF  _IOR(WMT_DETECT_IOC_MAGIC, 7, int)
 #define COMBO_IOCTL_DO_SDIO_AUDOK     _IOR(WMT_DETECT_IOC_MAGIC, 8, int)
 #define COMBO_IOCTL_GET_ADIE_CHIP_ID  _IOR(WMT_DETECT_IOC_MAGIC, 9, int)
+#define COMBO_IOCTL_CONNSYS_SOC_HW_INIT   _IOR(WMT_DETECT_IOC_MAGIC, 10, int)
 
 typedef enum _ENUM_WMT_CHIP_TYPE_T {
 	WMT_CHIP_TYPE_COMBO,
@@ -104,6 +105,7 @@ extern int wmt_detect_ext_chip_pwr_off(void);
 
 extern unsigned int wmt_plat_get_soc_chipid(void);
 extern int wmt_plat_get_adie_chipid(void);
+extern int wmt_plat_consys_hw_init(void);
 
 #ifdef MTK_WCN_COMBO_CHIP_SUPPORT
 /* mtk_uart_pdn_enable -- request uart port enter/exit deep idle mode, this API is defined in uart driver

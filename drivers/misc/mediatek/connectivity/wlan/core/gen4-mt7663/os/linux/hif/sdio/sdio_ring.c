@@ -114,8 +114,8 @@ int sdio_ring_thread(void *data)
 	struct GLUE_INFO *prGlueInfo = *((struct GLUE_INFO **)
 					 netdev_priv(dev));
 
-	set_user_nice(current,
-		      prGlueInfo->prAdapter->rWifiVar.cThreadNice);
+	kal_Set_Thread_SchPolicy_Priority(prGlueInfo);
+
 	DBGLOG(INIT, INFO, "%s:%u starts running...\n",
 		KAL_GET_CURRENT_THREAD_NAME(),
 		KAL_GET_CURRENT_THREAD_ID());
@@ -182,16 +182,6 @@ uint32_t Initial_sdio_ring(struct GLUE_INFO *prGlueInfo)
 
 	prHif->sdio_ring_thread = kthread_run(sdio_ring_thread,
 				prGlueInfo->prDevHandler, "sdio_ring_thread");
-	if (prGlueInfo->prAdapter->rWifiVar.ucThreadPriority > 0) {
-		struct sched_param param = {
-			.sched_priority = prGlueInfo->prAdapter
-			->rWifiVar.ucThreadPriority
-		};
-		sched_setscheduler(prHif->sdio_ring_thread,
-						prGlueInfo->prAdapter->rWifiVar
-						.ucThreadScheduling, &param);
-	}
-
 	return TRUE;
 }
 uint8_t sdio_ring_push(struct GLUE_INFO *prGlueInfo)

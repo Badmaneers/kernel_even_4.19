@@ -147,6 +147,9 @@
 #define RATE_54M                                108	/* 54M */
 /* 7.3.2.14 BSS membership selector */
 #define RATE_HT_PHY                             127	/* BSS Selector - Clause 20. HT PHY */
+#define RATE_H2E_ONLY                           123 /* BSS Selector - Hash to Element only */
+#define RATE_H2E_ONLY_VAL                       (0x80 | 123)
+
 #define RATE_MASK                               BITS(0, 6)	/* mask bits for the rate */
 #define RATE_BASIC_BIT                          BIT(7)	/* mask bit for the rate belonging to the BSSBasicRateSet */
 
@@ -648,6 +651,8 @@
 #define STATUS_CODE_DESTINATION_STA_NOT_PRESENT     49	/* Destination STA is not present within this QBSS */
 #define STATUS_CODE_DESTINATION_STA_NOT_QSTA        50	/* Destination STA is not a QSTA */
 #define STATUS_CODE_ASSOC_DENIED_LARGE_LIS_INTERVAL 51	/* Association denied because the ListenInterval is too large */
+#define STATUS_INVALID_PMKID                        53  /* Invalid pairwise master key identifier (PMKID) */
+
 
 /* proprietary definition of reserved field of Status Code */
 #define STATUS_CODE_JOIN_FAILURE                    0xFFF0	/* Join failure */
@@ -759,6 +764,8 @@
 #define ELEM_ID_WFD                                 ELEM_ID_VENDOR	/* WiFi Direct */
 #define ELEM_ID_WSC                                 ELEM_ID_VENDOR	/* WSC IE */
 
+#define ELEM_ID_RSNX				     244
+
 #define ELEM_ID_RESERVED                            255	/* Reserved */
 
 /* 7.3.2.1 SSID element */
@@ -833,8 +840,8 @@
 #define ELEM_RM_TYPE_TSM_REPORT                      9
 
 /* 7.3.2.25 RSN information element */
-#define ELEM_MAX_LEN_WPA                            34	/* one pairwise, one AKM suite, one PMKID */
-#define ELEM_MAX_LEN_RSN                            38	/* one pairwise, one AKM suite, one PMKID */
+#define ELEM_MAX_LEN_WPA                            38	/* two pairwise, one AKM suite, one PMKID */
+#define ELEM_MAX_LEN_RSN                            42	/* two pairwise, one AKM suite, one PMKID */
 #define ELEM_MAX_LEN_WAPI                           38	/* one pairwise, one AKM suite, one BKID */
 #define ELEM_MAX_LEN_WSC                            200	/* one pairwise, one AKM suite, one BKID */
 
@@ -1061,6 +1068,9 @@
 
 /* 7.4.7 Public Action frame details */
 #define ACTION_PUBLIC_20_40_COEXIST                 0	/* 20/40 BSS coexistence */
+
+/* 20/40 BSS coexistence */
+#define ACTION_PUBLIC_VENDOR_SPECIFIC               9
 
 #if CFG_SUPPORT_802_11W
 /* SA Query Action frame (IEEE 802.11w/D8.0, 7.4.9) */

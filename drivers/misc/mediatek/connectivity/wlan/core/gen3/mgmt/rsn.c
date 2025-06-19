@@ -1242,7 +1242,7 @@ VOID rsnGenerateWPAIE(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo)
 			WLAN_SET_FIELD_32(&WPA_IE(pucBuffer)->u4GroupKeyCipherSuite,
 					  prAdapter->prAisBssInfo->u4RsnSelectedGroupCipher);
 
-		cp = pucBuffer + OFFSET_OF(RSN_INFO_ELEM_T, aucPairwiseKeyCipherSuite1[0]);
+		cp = pucBuffer + OFFSET_OF(WPA_INFO_ELEM_T, aucPairwiseKeyCipherSuite1[0]);
 
 		WLAN_SET_FIELD_16(&WPA_IE(pucBuffer)->u2PairwiseKeyCipherSuiteCount, 1);
 #if CFG_ENABLE_WIFI_DIRECT
@@ -1431,8 +1431,14 @@ VOID rsnGenerateRSNIE(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo)
 		} else
 			u4Entry = 0;
 #if CFG_SUPPORT_802_11W
+		DBGLOG(RSN, TRACE, "networkType(%u) - mgmtProtection(%u)\n",
+			GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex)->eNetworkType,
+			prAdapter->rWifiVar.rAisSpecificBssInfo.fgMgmtProtection);
+
 		/* PMF cipher suite field */
-		if (prAdapter->rWifiVar.rAisSpecificBssInfo.fgMgmtProtection) {
+		if (prAdapter->rWifiVar.rAisSpecificBssInfo.fgMgmtProtection
+			&& GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex)->eNetworkType
+			== NETWORK_TYPE_AIS) {
 		    /* the case No Pmkid should add pmkid length */
 			if (!u4Entry) {
 				WLAN_SET_FIELD_16(cp, 0);
@@ -1448,6 +1454,44 @@ VOID rsnGenerateRSNIE(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo)
 	}
 
 }				/* rsnGenerateRSNIE */
+
+void rsnGenerateRSNXIE(IN P_ADAPTER_T prAdapter,
+	IN P_MSDU_INFO_T prMsduInfo)
+{
+	P_P2P_SPECIFIC_BSS_INFO_T prP2pSpecBssInfo = NULL;
+	P_BSS_INFO_T prBssInfo = NULL;
+	UINT_8 ucBssIndex;
+
+	ucBssIndex = prMsduInfo->ucBssIndex;
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+	if (!prBssInfo)
+		return;
+
+	/* AP + GO */
+	if (!IS_BSS_APGO(prBssInfo))
+		return;
+
+	prP2pSpecBssInfo =
+		prAdapter->rWifiVar.prP2pSpecificBssInfo;
+
+	if (prP2pSpecBssInfo &&
+		(prP2pSpecBssInfo->u2RsnxIeLen != 0)) {
+		PUINT_8 pucBuffer =
+			(PUINT_8) ((unsigned long)
+			prMsduInfo->prPacket + (unsigned long)
+			prMsduInfo->u2FrameLength);
+
+		kalMemCopy(pucBuffer,
+			prP2pSpecBssInfo->aucRsnxIeBuffer,
+			prP2pSpecBssInfo->u2RsnxIeLen);
+		prMsduInfo->u2FrameLength +=
+			prP2pSpecBssInfo->u2RsnxIeLen;
+
+		DBGLOG(RSN, INFO,
+			"Keep supplicant RSNXIE content w/o update\n");
+	}
+}
 
 /*----------------------------------------------------------------------------*/
 /*!

@@ -176,6 +176,7 @@ VOID p2pFsmInit(IN P_ADAPTER_T prAdapter)
 				OP_MODE_P2P_DEVICE, TRUE);
 
 		p2pFsmStateTransition(prAdapter, prP2pFsmInfo, P2P_STATE_IDLE);
+		LINK_INITIALIZE(&prP2pBssInfo->rPmkidCache);
 	} while (FALSE);
 
 }				/* p2pFsmInit */
@@ -236,12 +237,32 @@ VOID p2pFsmUninit(IN P_ADAPTER_T prAdapter)
 			cnmMgtPktFree(prAdapter, prP2pBssInfo->prBeacon);
 			prP2pBssInfo->prBeacon = NULL;
 		}
-
+		rsnFlushPmkid(prAdapter);
 	} while (FALSE);
 
 	return;
 
 }				/* end of p2pFsmUninit() */
+
+#if DBG
+PUINT_8
+	p2pFsmGetFsmState(
+	IN ENUM_P2P_STATE_T eCurrentState) {
+	if (eCurrentState < P2P_STATE_NUM)
+		return apucDebugP2pState[eCurrentState];
+
+	return (PUINT_8) DISP_STRING("UNKNOWN");
+}
+#else
+UINT_8
+	p2pFsmGetFsmState(
+	IN ENUM_P2P_STATE_T eCurrentState) {
+	if (eCurrentState < P2P_STATE_NUM)
+		return apucDebugP2pState[eCurrentState];
+
+	return P2P_STATE_NUM;
+}
+#endif
 
 VOID p2pFsmStateTransition(IN P_ADAPTER_T prAdapter, IN P_P2P_FSM_INFO_T prP2pFsmInfo, IN ENUM_P2P_STATE_T eNextState)
 {
@@ -273,12 +294,13 @@ VOID p2pFsmStateTransition(IN P_ADAPTER_T prAdapter, IN P_P2P_FSM_INFO_T prP2pFs
 		if (!fgIsTransOut) {
 #if DBG
 			DBGLOG(P2P, STATE, "TRANSITION: [%s] -> [%s]\n",
-					    apucDebugP2pState[prP2pFsmInfo->eCurrentState],
-					    apucDebugP2pState[eNextState]);
+					    p2pFsmGetFsmState(prP2pFsmInfo->eCurrentState),
+					    p2pFsmGetFsmState(eNextState));
 #else
 			DBGLOG(P2P, STATE, "[%d] TRANSITION: [%d] -> [%d]\n",
-					    DBG_P2P_IDX, apucDebugP2pState[prP2pFsmInfo->eCurrentState],
-					    apucDebugP2pState[eNextState]);
+					    DBG_P2P_IDX,
+					    p2pFsmGetFsmState(prP2pFsmInfo->eCurrentState),
+					    p2pFsmGetFsmState(eNextState));
 #endif
 
 			/* Transition into current state. */
@@ -1302,6 +1324,7 @@ VOID p2pFsmRunEventStopAP(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
 
 		/* p2pFsmRunEventAbort(prAdapter, prAdapter->rWifiVar.prP2pFsmInfo); */
 		p2pFsmStateTransition(prAdapter, prAdapter->rWifiVar.prP2pFsmInfo, P2P_STATE_IDLE);
+		rsnFlushPmkid(prAdapter);
 
 	} while (FALSE);
 

@@ -165,6 +165,8 @@
 
 #define DHCP_MAGIC_NUMBER                       0x63825363
 
+#define IP_PORT_MDNS                             5353
+
 #define ARP_OPERATION_OFFSET                    6
 #define ARP_SNEDER_MAC_OFFSET                   8
 #define ARP_SENDER_IP_OFFSET                    14
@@ -276,9 +278,13 @@
 #define RATE_48M                                96	/* 48M */
 #define RATE_54M                                108	/* 54M */
 /* 7.3.2.14 BSS membership selector */
+/* BSS Selector - Hash To Element only */
+#define RATE_H2E_ONLY                           123
+/* BSS Selector - Clause 22. HT PHY */
+#define RATE_VHT_PHY                            126
+/* BSS Selector - Clause 20. HT PHY */
+#define RATE_HT_PHY                             127
 
-#define RATE_VHT_PHY                            126	/* BSS Selector - Clause 22. HT PHY */
-#define RATE_HT_PHY                             127	/* BSS Selector - Clause 20. HT PHY */
 #define RATE_MASK                               BITS(0, 6)	/* mask bits for the rate */
 #define RATE_BASIC_BIT                          BIT(7)	/* mask bit for the rate belonging to the BSSBasicRateSet */
 
@@ -553,6 +559,9 @@
 #if CFG_SUPPORT_CFG80211_AUTH
 #define AUTH_ALGORITHM_NUM_SAE                      3	/* SAE */
 #endif
+#if CFG_SUPPORT_SOFTAP_WPA3
+#define AUTH_ALGORITHM_NUM_WPA2PSK_SAE				4 /* WPA3 transition mode */
+#endif
 
 /* 7.3.1.2 Authentication Transaction Sequence Number field */
 #define AUTH_TRANSACTION_SEQENCE_NUM_FIELD_LEN      2
@@ -560,6 +569,8 @@
 #define AUTH_TRANSACTION_SEQ_2                      2
 #define AUTH_TRANSACTION_SEQ_3                      3
 #define AUTH_TRANSACTION_SEQ_4                      4
+
+#define AUTH_STATUS_CODE_FIELD_LEN                  2
 
 /* 7.3.1.3 Beacon Interval field */
 #define BEACON_INTERVAL_FIELD_LEN                   2
@@ -728,6 +739,8 @@
 #define STATUS_CODE_DESTINATION_STA_NOT_QSTA        50	/* Destination STA is not a QSTA */
 #define STATUS_CODE_ASSOC_DENIED_LARGE_LIS_INTERVAL 51	/* Association denied because the ListenInterval is too large */
 
+#define WLAN_STATUS_SAE_HASH_TO_ELEMENT             126
+
 /* proprietary definition of reserved field of Status Code */
 #define STATUS_CODE_JOIN_FAILURE                    0xFFF0	/* Join failure */
 #define STATUS_CODE_JOIN_TIMEOUT                    0xFFF1	/* Join timeout */
@@ -811,6 +824,9 @@
 #define ELEM_ID_QOS_CAP                             46	/* QoS capability */
 #define ELEM_ID_RSN                                 48	/* RSN IE */
 #define ELEM_ID_EXTENDED_SUP_RATES                  50	/* Extended supported rates */
+#define ELEM_ID_MOBILITY_DOMAIN     54  /* Mobility Domain for 802.11R */
+#define ELEM_ID_FAST_TRANSITION     55  /* Fast Bss Transition for 802.11 R */
+
 #if CFG_SUPPORT_802_11W
 #define ELEM_ID_TIMEOUT_INTERVAL                    56	/* 802.11w SA Timeout interval */
 #endif
@@ -1308,7 +1324,10 @@
 #define ACTION_NEIGHBOR_REPORT_RSP                  5	/* Neighbor report response */
 
 /* 7.4.7 Public Action frame details */
-#define ACTION_PUBLIC_20_40_COEXIST                 0	/* 20/40 BSS coexistence */
+/* 20/40 BSS coexistence */
+#define ACTION_PUBLIC_20_40_COEXIST                 0
+/* 20/40 BSS coexistence */
+#define ACTION_PUBLIC_VENDOR_SPECIFIC               9
 
 #if CFG_SUPPORT_802_11W
 /* SA Query Action frame (IEEE 802.11w/D8.0, 7.4.9) */
@@ -2565,6 +2584,29 @@ typedef struct _IE_MTK_OUI_T {
 	UINT_8 aucCapability[4];
 	UINT_8 aucInfoElem[1];
 } __KAL_ATTRIB_PACKED__ IE_MTK_OUI_T, *P_IE_MTK_OUI_T;
+struct IE_MOBILITY_DOMAIN {
+	uint8_t ucId; /* Element ID = 54 */
+	uint8_t ucLength; /* Length is 3 */
+	uint16_t u2MDID;
+	/* Bit 0: FT over DS; Bit 1: Resource Request Protocol Capbility,
+	** others: reserved
+	*/
+	uint8_t ucBitMap;
+} __KAL_ATTRIB_PACKED__;
+
+struct IE_FAST_TRANSITION {
+	uint8_t ucId; /* Element ID = 55 */
+	uint8_t ucLength; /* Length is variable */
+	/* Bit 0 ~ Bit 7: reserved; Bit 8 ~ Bit 15: IE count
+	** used to calculate MIC, 0 means No MIC
+	*/
+	uint8_t ucMicCtrl;
+	uint8_t aucMic[16]; /*  */
+	uint8_t aucANonce[32]; /* Nonce of R1KH */
+	uint8_t aucSNonce[32]; /* Nonce of S1KH */
+	uint8_t aucOptParam[0];
+} __KAL_ATTRIB_PACKED__;
+
 
 #if defined(WINDOWS_DDK) || defined(WINDOWS_CE)
 #pragma pack()

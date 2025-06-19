@@ -163,6 +163,10 @@ extern char *HW_TX_RATE_BW[];
 #define PRIV_CMD_SET_WOW_PAR			35
 #endif
 
+#if CFG_SUPPORT_WAC
+#define	PRIV_CMD_WAC_IE				38
+#endif
+
 /* 802.3 Objects (Ethernet) */
 #define OID_802_3_CURRENT_ADDRESS           0x01010102
 
@@ -232,6 +236,8 @@ extern char *HW_TX_RATE_BW[];
 /* Define magic key of test mode (Don't change it for future compatibity) */
 #define PRIV_CMD_TEST_MAGIC_KEY                         2011
 #define PRIV_CMD_TEST_MAGIC_KEY_ICAP                         2013
+
+#define IW_PRIV_BUF_SIZE			2000
 
 /* CFG_SUPPORT_ADVANCE_CONTROL */
 #define TX_RATE_MODE_CCK	0
@@ -401,8 +407,10 @@ int priv_support_ioctl(IN struct net_device *prDev, IN OUT struct ifreq *prReq, 
 
 int priv_support_driver_cmd(IN struct net_device *prDev, IN OUT struct ifreq *prReq, IN int i4Cmd);
 
+#if CFG_SUPPORT_MDNS_OFFLOAD
 int priv_support_mdns_offload(IN struct net_device *prDev,
 				IN OUT struct ifreq *prReq, IN int i4Cmd);
+#endif
 
 #ifdef CFG_ANDROID_AOSP_PRIV_CMD
 int android_private_support_driver_cmd(IN struct net_device *prDev, IN OUT struct ifreq *prReq, IN int i4Cmd);

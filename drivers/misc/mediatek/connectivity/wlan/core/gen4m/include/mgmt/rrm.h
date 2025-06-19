@@ -164,6 +164,7 @@ void rrmFillRrmCapa(uint8_t *pucCapa);
 void rrmStartNextMeasurement(struct ADAPTER *prAdapter, u_int8_t fgNewStarted,
 	uint8_t ucBssIndex);
 
+
 u_int8_t rrmFillScanMsg(struct ADAPTER *prAdapter,
 			struct MSG_SCN_SCAN_REQ_V2 *prMsg);
 
@@ -188,6 +189,10 @@ void rrmScheduleNextRm(struct ADAPTER *prAdapter,
 	uint8_t ucBssIndex);
 
 void rrmUpdateBssTimeTsf(struct ADAPTER *prAdapter, struct BSS_DESC *prBssDesc);
+
+#if (CFG_SUPPORT_WIFI_6G == 1)
+uint8_t rrmCheckIs6GOpClass(uint8_t ucOpClass);
+#endif
 
 void rrmCollectBeaconReport(IN struct ADAPTER *prAdapter,
 	IN struct BSS_DESC *prBssDesc, IN uint8_t ucBssIndex);

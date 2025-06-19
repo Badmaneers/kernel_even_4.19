@@ -177,7 +177,8 @@ static const struct wiphy_vendor_command mtk_p2p_vendor_ops[] = {
 			.subcmd = WIFI_SUBCMD_GET_CHANNEL_LIST
 		},
 		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
-		.doit = mtk_cfg80211_vendor_get_channel_list
+		.doit = mtk_cfg80211_vendor_get_channel_list,
+		VENDOR_OPS_SET_POLICY(VENDOR_CMD_RAW_DATA)
 	},
 	{
 		{
@@ -185,7 +186,8 @@ static const struct wiphy_vendor_command mtk_p2p_vendor_ops[] = {
 			.subcmd = WIFI_SUBCMD_SET_COUNTRY_CODE
 		},
 		.flags = WIPHY_VENDOR_CMD_NEED_WDEV | WIPHY_VENDOR_CMD_NEED_NETDEV,
-		.doit = mtk_cfg80211_vendor_set_country_code
+		.doit = mtk_cfg80211_vendor_set_country_code,
+		VENDOR_OPS_SET_POLICY(VENDOR_CMD_RAW_DATA)
 	},
 };
 
@@ -205,6 +207,12 @@ mtk_cfg80211_default_mgmt_stypes[NUM_NL80211_IFTYPES] = {
 	[NL80211_IFTYPE_AP] = {
 			       .tx = 0xffff,
 			       .rx = BIT(IEEE80211_STYPE_PROBE_REQ >> 4) | BIT(IEEE80211_STYPE_ACTION >> 4)
+#if CFG_SUPPORT_SOFTAP_WPA3
+					| BIT(IEEE80211_STYPE_REASSOC_REQ >> 4) |
+					BIT(IEEE80211_STYPE_DISASSOC >> 4) |
+					BIT(IEEE80211_STYPE_AUTH >> 4) |
+					BIT(IEEE80211_STYPE_DEAUTH >> 4)
+#endif
 			       },
 	[NL80211_IFTYPE_AP_VLAN] = {
 				    /* copy AP */
@@ -227,6 +235,11 @@ mtk_cfg80211_default_mgmt_stypes[NUM_NL80211_IFTYPES] = {
 };
 
 #endif
+
+
+static const iw_handler rP2PIwPrivHandler[] = {
+	[IOCTL_GET_DRIVER - SIOCIWFIRSTPRIV] = priv_set_driver
+};
 
 
 static const struct iw_priv_args rP2PIwPrivTable[] = {
@@ -303,26 +316,24 @@ static const struct iw_priv_args rP2PIwPrivTable[] = {
 	 {IOCTL_GET_DRIVER, IW_PRIV_TYPE_CHAR | 2000, IW_PRIV_TYPE_CHAR | 2000, "driver"},
 };
 
-#if 0
+
 const struct iw_handler_def mtk_p2p_wext_handler_def = {
-	.num_standard = (__u16) sizeof(rP2PIwStandardHandler) / sizeof(iw_handler),
-/* .num_private        = (__u16)sizeof(rP2PIwPrivHandler)/sizeof(iw_handler), */
+	.num_standard = 0,
+	.num_private = (__u16)sizeof(rP2PIwPrivHandler)/sizeof(iw_handler),
 	.num_private_args = (__u16) sizeof(rP2PIwPrivTable) / sizeof(struct iw_priv_args),
-	.standard = rP2PIwStandardHandler,
-/* .private            = rP2PIwPrivHandler, */
+	.standard = NULL,
+	.private = rP2PIwPrivHandler,
 	.private_args = rP2PIwPrivTable,
-#if CFG_SUPPORT_P2P_RSSI_QUERY
-	.get_wireless_stats = mtk_p2p_wext_get_wireless_stats,
-#else
 	.get_wireless_stats = NULL,
-#endif
 };
-#endif
+
 
 #ifdef CONFIG_PM
+#if KERNEL_VERSION(3, 9, 0) > CFG80211_VERSION_CODE
 static const struct wiphy_wowlan_support mtk_p2p_wowlan_support = {
 	.flags = WIPHY_WOWLAN_DISCONNECT | WIPHY_WOWLAN_ANY,
 };
+#endif
 #endif
 
 static const struct ieee80211_iface_limit mtk_p2p_sta_go_limits[] = {
@@ -416,7 +427,8 @@ static struct net_device_stats *p2pGetStats(IN struct net_device *prDev);
 
 static void p2pSetMulticastList(IN struct net_device *prDev);
 
-static int p2pHardStartXmit(IN struct sk_buff *prSkb, IN struct net_device *prDev);
+static netdev_tx_t p2pHardStartXmit(IN struct sk_buff *prSkb,
+		IN struct net_device *prDev);
 
 static int p2pSetMACAddress(IN struct net_device *prDev, void *addr);
 
@@ -508,7 +520,6 @@ BOOLEAN p2PAllocInfo(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucIdex)
 			prGlueInfo->prP2PInfo[ucIdex] = kalMemAlloc(sizeof(GL_P2P_INFO_T), VIR_MEM_TYPE);
 
 			if (ucIdex == 0) {
-				/*printk("[CHECK!]p2PAllocInfo : Alloc Common part only first interface\n");*/
 				prGlueInfo->prP2PDevInfo = kalMemAlloc(sizeof(GL_P2P_DEV_INFO_T), VIR_MEM_TYPE);
 				prAdapter->prP2pInfo = kalMemAlloc(sizeof(P2P_INFO_T), VIR_MEM_TYPE);
 				prWifiVar->prP2pDevFsmInfo = kalMemAlloc(sizeof(P2P_DEV_FSM_INFO_T), VIR_MEM_TYPE);
@@ -968,7 +979,8 @@ BOOLEAN glRegisterP2P(P_GLUE_INFO_T prGlueInfo, const char *prDevName, const cha
 		/* 4.3 register callback functions */
 		prGlueInfo->prP2PInfo[i]->prDevHandler->needed_headroom += NIC_TX_HEAD_ROOM;
 		prGlueInfo->prP2PInfo[i]->prDevHandler->netdev_ops = &p2p_netdev_ops;
-	/* prGlueInfo->prP2PInfo->prDevHandler->wireless_handlers    = &mtk_p2p_wext_handler_def; */
+		prGlueInfo->prP2PInfo[i]->prDevHandler->wireless_handlers
+			= &mtk_p2p_wext_handler_def;
 
 #if defined(_HIF_SDIO)
 #if (MTK_WCN_HIF_SDIO == 0)
@@ -1509,7 +1521,7 @@ static void p2pSetMulticastList(IN struct net_device *prDev)
 	}
 
 #if CFG_CHIP_RESET_SUPPORT
-	if (g_u4HaltFlag || checkResetState()) {
+	if (g_u4HaltFlag || kalIsResetting()) {
 		DBGLOG(INIT, WARN, "wlan is halt, skip p2pSetMulticastList\n");
 		return;
 	}
@@ -1543,7 +1555,7 @@ void mtk_p2p_wext_set_Multicastlist(P_GLUE_INFO_T prGlueInfo)
 
 	ASSERT(prDev);
 	ASSERT(prGlueInfo);
-	if (!prDev || !prGlueInfo) {
+	if (!prDev || !prGlueInfo || !prGlueInfo->prP2PDevInfo) {
 		DBGLOG(INIT, WARN, " abnormal dev or skb: prDev(0x%p), prGlueInfo(0x%p)\n", prDev, prGlueInfo);
 		return;
 	}
@@ -1605,7 +1617,8 @@ void mtk_p2p_wext_set_Multicastlist(P_GLUE_INFO_T prGlueInfo)
  * * \retval NETDEV_TX_BUSY - on failure, packet will be discarded by upper layer.
  */
 /*----------------------------------------------------------------------------*/
-int p2pHardStartXmit(IN struct sk_buff *prSkb, IN struct net_device *prDev)
+netdev_tx_t p2pHardStartXmit(IN struct sk_buff *prSkb,
+			IN struct net_device *prDev)
 {
 	P_NETDEV_PRIVATE_GLUE_INFO prNetDevPrivate = (P_NETDEV_PRIVATE_GLUE_INFO) NULL;
 	P_GLUE_INFO_T prGlueInfo = NULL;
@@ -1615,7 +1628,7 @@ int p2pHardStartXmit(IN struct sk_buff *prSkb, IN struct net_device *prDev)
 	ASSERT(prDev);
 
 #if CFG_CHIP_RESET_SUPPORT
-	if (g_u4HaltFlag || checkResetState()) {
+	if (g_u4HaltFlag || kalIsResetting()) {
 		DBGLOG(INIT, WARN, "wlan is halt, skip p2pHardStartXmit\n");
 		return NETDEV_TX_BUSY;
 	}
@@ -1666,7 +1679,7 @@ int p2pDoIOCTL(struct net_device *prDev, struct ifreq *prIfReq, int i4Cmd)
 	ASSERT(prDev && prIfReq);
 
 #if CFG_CHIP_RESET_SUPPORT
-	if (g_u4HaltFlag || checkResetState()) {
+	if (g_u4HaltFlag || kalIsResetting()) {
 		DBGLOG(INIT, WARN, "wlan is halt, skip p2pDoIOCTL\n");
 		return -EFAULT;
 	}
