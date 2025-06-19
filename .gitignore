@@ -137,5 +137,5 @@ kernel/configs/android-*.cfg
 /anykernel/
 /arm-gcc/
 /aarch64-gcc/
-origami_kernel_builder.sh
+run.sh
 .buildnumber
