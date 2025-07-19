@@ -31,7 +31,6 @@ unsigned int uclamp_discount_wait_time(struct task_struct *p);
 unsigned long stune_util(int cpu, unsigned long other_util);
 
 #ifdef CONFIG_UCLAMP_TASK_GROUP
-extern struct schedtune root_schedtune;
 struct uclamp_se
 uclamp_st_restrict(struct task_struct *p, enum uclamp_id clamp_id);
 

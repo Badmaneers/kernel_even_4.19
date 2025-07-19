@@ -2,37 +2,14 @@
 /*
  * s390 arch random implementation.
  *
- * Copyright IBM Corp. 2017, 2018
+ * Copyright IBM Corp. 2017, 2020
  * Author(s): Harald Freudenberger
- *
- * The s390_arch_random_generate() function may be called from random.c
- * in interrupt context. So this implementation does the best to be very
- * fast. There is a buffer of random data which is asynchronously checked
- * and filled by a workqueue thread.
- * If there are enough bytes in the buffer the s390_arch_random_generate()
- * just delivers these bytes. Otherwise false is returned until the
- * worker thread refills the buffer.
- * The worker fills the rng buffer by pulling fresh entropy from the
- * high quality (but slow) true hardware random generator. This entropy
- * is then spread over the buffer with an pseudo random generator PRNG.
- * As the arch_get_random_seed_long() fetches 8 bytes and the calling
- * function add_interrupt_randomness() counts this as 1 bit entropy the
- * distribution needs to make sure there is in fact 1 bit entropy contained
- * in 8 bytes of the buffer. The current values pull 32 byte entropy
- * and scatter this into a 2048 byte buffer. So 8 byte in the buffer
- * will contain 1 bit of entropy.
- * The worker thread is rescheduled based on the charge level of the
- * buffer but at least with 500 ms delay to avoid too much CPU consumption.
- * So the max. amount of rng data delivered via arch_get_random_seed is
- * limited to 4k bytes per second.
  */
 
 #include <linux/kernel.h>
 #include <linux/atomic.h>
 #include <linux/random.h>
-#include <linux/slab.h>
 #include <linux/static_key.h>
-#include <linux/workqueue.h>
 #include <asm/cpacf.h>
 
 DEFINE_STATIC_KEY_FALSE(s390_arch_random_available);
