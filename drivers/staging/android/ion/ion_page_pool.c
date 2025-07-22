@@ -24,6 +24,13 @@
 #include <linux/sched/clock.h>
 #include "ion_priv.h"
 
+/*
+ * We avoid atomic_long_t to minimize cache flushes at the cost of possible
+ * race which would result in a small accounting inaccuracy that we can
+ * tolerate.
+ */
+static long nr_total_pages;
+
 static unsigned long long last_alloc_ts;
 
 /*

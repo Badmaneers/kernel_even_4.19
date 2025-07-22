@@ -178,6 +178,9 @@ struct ufs_pm_lvl_states {
  * @crypto_enable: whether or not the request needs inline crypto operations
  * @crypto_key_slot: the key slot to use for inline crypto
  * @data_unit_num: the data unit number for the first block for inline crypto
+ * @crypto_enable: whether or not the request needs inline crypto operations
+ * @crypto_key_slot: the key slot to use for inline crypto
+ * @data_unit_num: the data unit number for the first block for inline crypto
  * @req_abort_skip: skip request abort task flag
  */
 struct ufshcd_lrb {
@@ -648,6 +651,7 @@ struct ufs_transmission_status_t
  * @vops: pointer to variant specific operations
  * @priv: pointer to variant specific private data
  * @sg_entry_size: size of struct ufshcd_sg_entry (may include variant fields)
+ * @sg_entry_size: size of struct ufshcd_sg_entry (may include variant fields)
  * @irq: Irq number of the controller
  * @active_uic_cmd: handle of active UIC command
  * @uic_cmd_mutex: mutex for uic command
@@ -739,6 +743,8 @@ struct ufs_hba {
 	u32 ufs_version;
 	struct ufs_hba_variant_ops *vops;
 	void *priv;
+	const struct ufs_hba_crypto_variant_ops *crypto_vops;
+	size_t sg_entry_size;
 	const struct ufs_hba_crypto_variant_ops *crypto_vops;
 	size_t sg_entry_size;
 	unsigned int irq;
@@ -903,6 +909,11 @@ struct ufs_hba {
 	 * the performance of ongoing read/write operations.
 	 */
 #define UFSHCD_CAP_KEEP_AUTO_BKOPS_ENABLED_EXCEPT_SUSPEND (1 << 5)
+	/*
+	 * This capability allows the host controller driver to use the
+	 * inline crypto engine, if it is present
+	 */
+#define UFSHCD_CAP_CRYPTO (1 << 7)
 	/*
 	 * This capability allows the host controller driver to use the
 	 * inline crypto engine, if it is present

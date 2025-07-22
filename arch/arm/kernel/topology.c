@@ -45,6 +45,18 @@ const struct sched_group_energy * const cpu_cluster_energy(int cpu)
 }
 #endif
 
+static inline
+const struct sched_group_energy * const cpu_core_energy(int cpu)
+{
+	return sge_array[cpu][SD_LEVEL0];
+}
+
+static inline
+const struct sched_group_energy * const cpu_cluster_energy(int cpu)
+{
+	return sge_array[cpu][SD_LEVEL1];
+}
+
 /*
  * cpu capacity scale management
  */
@@ -391,12 +403,14 @@ void store_cpu_topology(unsigned int cpuid)
 {
 	update_siblings_masks(cpuid);
 
+	update_cpu_capacity(cpuid);
+
 	topology_detect_flags();
 
 	pr_info("CPU%u: thread %d, cpu %d, socket %d\n",
 		cpuid, cpu_topology[cpuid].thread_id,
 		cpu_topology[cpuid].core_id,
-		cpu_topology[cpuid].socket_id);
+		cpu_topology[cpuid].socket_id, mpidr);
 }
 
 #ifdef CONFIG_SCHED_MC

@@ -257,12 +257,6 @@ static int f2fs_do_sync_file(struct file *file, loff_t start, loff_t end,
 	};
 	unsigned int seq_id = 0;
 
-#ifdef CONFIG_F2FS_BD_STAT
-	u64 fsync_begin = 0, fsync_end = 0, wr_file_end, cp_begin = 0,
-	    cp_end = 0, sync_node_begin = 0, sync_node_end = 0,
-	    flush_begin = 0, flush_end = 0;
-#endif
-
 	if (unlikely(f2fs_readonly(inode->i_sb) ||
 				is_sbi_flag_set(sbi, SBI_CP_DISABLED)))
 		return 0;
@@ -293,7 +287,7 @@ static int f2fs_do_sync_file(struct file *file, loff_t start, loff_t end,
 	wr_file_end = local_clock();
 #endif
 
-	if (ret) {
+	if (ret || is_sbi_flag_set(sbi, SBI_CP_DISABLED)) {
 		trace_f2fs_sync_file_exit(inode, cp_reason, datasync, ret);
 		return ret;
 	}
@@ -348,15 +342,9 @@ go_write:
 		goto out;
 	}
 sync_nodes:
-#ifdef CONFIG_F2FS_BD_STAT
-	sync_node_begin = local_clock();
-#endif
 	atomic_inc(&sbi->wb_sync_req[NODE]);
 	ret = f2fs_fsync_node_pages(sbi, inode, &wbc, atomic, &seq_id);
 	atomic_dec(&sbi->wb_sync_req[NODE]);
-#ifdef CONFIG_F2FS_BD_STAT
-	sync_node_end = local_clock();
-#endif
 	if (ret)
 		goto out;
 
@@ -390,20 +378,8 @@ sync_nodes:
 	f2fs_remove_ino_entry(sbi, ino, APPEND_INO);
 	clear_inode_flag(inode, FI_APPEND_WRITE);
 flush_out:
-	/* VENDOR_EDIT yawnu@TECH.Storage.FS.oF2FS
-	 * 2019/09/13, fsync nobarrier protection
-	 */
-	if (!atomic && (F2FS_OPTION(sbi).fsync_mode != FSYNC_MODE_NOBARRIER ||
-							sbi->fsync_protect)) {
-	//if (!atomic && F2FS_OPTION(sbi).fsync_mode != FSYNC_MODE_NOBARRIER) {
-#ifdef CONFIG_F2FS_BD_STAT
-		flush_begin = local_clock();
-#endif
+	if (!atomic && F2FS_OPTION(sbi).fsync_mode != FSYNC_MODE_NOBARRIER)
 		ret = f2fs_issue_flush(sbi, inode->i_ino);
-#ifdef CONFIG_F2FS_BD_STAT
-		flush_end = local_clock();
-#endif
-	}
 	if (!ret) {
 		f2fs_remove_ino_entry(sbi, ino, UPDATE_INO);
 		clear_inode_flag(inode, FI_UPDATE_WRITE);
@@ -414,32 +390,6 @@ out:
 	trace_f2fs_sync_file_exit(inode, cp_reason, datasync, ret);
 	f2fs_trace_ios(NULL, 1);
 	trace_android_fs_fsync_end(inode, start, end - start);
-
-#ifdef CONFIG_F2FS_BD_STAT
-	if (!ret && fsync_begin) {
-		fsync_end = local_clock();
-		bd_lock(sbi);
-		if (S_ISREG(inode->i_mode))
-			bd_inc_val(sbi, fsync_reg_file_count, 1);
-		else if (S_ISDIR(inode->i_mode))
-			bd_inc_val(sbi, fsync_dir_count, 1);
-		bd_inc_val(sbi, fsync_time, fsync_end - fsync_begin);
-		bd_max_val(sbi, max_fsync_time, fsync_end - fsync_begin);
-		bd_inc_val(sbi, fsync_wr_file_time, wr_file_end - fsync_begin);
-		bd_max_val(sbi, max_fsync_wr_file_time, wr_file_end - fsync_begin);
-		bd_inc_val(sbi, fsync_cp_time, cp_end - cp_begin);
-		bd_max_val(sbi, max_fsync_cp_time, cp_end - cp_begin);
-		if (sync_node_end) {
-			bd_inc_val(sbi, fsync_sync_node_time,
-				   sync_node_end - sync_node_begin);
-			bd_max_val(sbi, max_fsync_sync_node_time,
-				   sync_node_end - sync_node_begin);
-		}
-		bd_inc_val(sbi, fsync_flush_time, flush_end - flush_begin);
-		bd_max_val(sbi, max_fsync_flush_time, flush_end - flush_begin);
-		bd_unlock(sbi);
-	}
-#endif
 
 	return ret;
 }
@@ -937,7 +887,8 @@ static void __setattr_copy(struct inode *inode, const struct iattr *attr)
 	if (ia_valid & ATTR_MODE) {
 		umode_t mode = attr->ia_mode;
 
-		if (!in_group_p(inode->i_gid) && !capable(CAP_FSETID))
+		if (!in_group_p(inode->i_gid) &&
+			!capable_wrt_inode_uidgid(inode, CAP_FSETID))
 			mode &= ~S_ISGID;
 		set_acl_inode(inode, mode);
 	}
@@ -3313,15 +3264,15 @@ static int f2fs_ioc_set_pin_file(struct file *filp, unsigned long arg)
 
 	inode_lock(inode);
 
-	if (f2fs_should_update_outplace(inode, NULL)) {
-		ret = -EINVAL;
-		goto out;
-	}
-
 	if (!pin) {
 		clear_inode_flag(inode, FI_PIN_FILE);
 		f2fs_i_gc_failures_write(inode, 0);
 		goto done;
+	}
+
+	if (f2fs_should_update_outplace(inode, NULL)) {
+		ret = -EINVAL;
+		goto out;
 	}
 
 	if (f2fs_pin_file_control(inode, false)) {

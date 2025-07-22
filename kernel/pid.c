@@ -40,6 +40,8 @@
 #include <linux/proc_fs.h>
 #include <linux/anon_inodes.h>
 #include <linux/sched/signal.h>
+#include <linux/anon_inodes.h>
+#include <linux/sched/signal.h>
 #include <linux/sched/task.h>
 #include <linux/file.h>
 
@@ -334,6 +336,8 @@ struct pid *alloc_pid(struct pid_namespace *ns)
 	atomic_set(&pid->count, 1);
 	for (type = 0; type < PIDTYPE_MAX; ++type)
 		INIT_HLIST_HEAD(&pid->tasks[type]);
+
+	init_waitqueue_head(&pid->wait_pidfd);
 
 	init_waitqueue_head(&pid->wait_pidfd);
 

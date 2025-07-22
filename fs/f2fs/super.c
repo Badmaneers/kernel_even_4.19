@@ -158,8 +158,6 @@ enum {
 	Opt_compress_algorithm,
 	Opt_compress_log_size,
 	Opt_compress_extension,
-	Opt_noatgc,
-	Opt_nosubdivision,
 	Opt_err,
 };
 
@@ -227,8 +225,6 @@ static match_table_t f2fs_tokens = {
 	{Opt_compress_algorithm, "compress_algorithm=%s"},
 	{Opt_compress_log_size, "compress_log_size=%u"},
 	{Opt_compress_extension, "compress_extension=%s"},
-	{Opt_noatgc, "noatgc"},
-	{Opt_nosubdivision, "nosubdivision"},
 	{Opt_err, NULL},
 };
 
@@ -829,7 +825,21 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			kvfree(name);
 			break;
 		case Opt_fsync:
-			f2fs_info(sbi, "changing fsync mode not supported");
+			name = match_strdup(&args[0]);
+			if (!name)
+				return -ENOMEM;
+			if (!strcmp(name, "posix")) {
+				F2FS_OPTION(sbi).fsync_mode = FSYNC_MODE_POSIX;
+			} else if (!strcmp(name, "strict")) {
+				F2FS_OPTION(sbi).fsync_mode = FSYNC_MODE_STRICT;
+			} else if (!strcmp(name, "nobarrier")) {
+				F2FS_OPTION(sbi).fsync_mode =
+							FSYNC_MODE_NOBARRIER;
+			} else {
+				kvfree(name);
+				return -EINVAL;
+			}
+			kvfree(name);
 			break;
 		case Opt_test_dummy_encryption:
 			ret = f2fs_set_test_dummy_encryption(sb, p, &args[0],
@@ -863,12 +873,6 @@ static int parse_options(struct super_block *sb, char *options, bool is_remount)
 			break;
 		case Opt_checkpoint_enable:
 			clear_opt(sbi, DISABLE_CHECKPOINT);
- 			break;
-		case Opt_noatgc:
-			set_priv_opt(sbi, NOATGC);
-			break;
-		case Opt_nosubdivision:
-			set_priv_opt(sbi, NOSUBDIVISION);
 			break;
 		case Opt_compress_algorithm:
 			if (!f2fs_sb_has_compression(sbi)) {
@@ -1195,6 +1199,9 @@ static void f2fs_put_super(struct super_block *sb)
 	int i;
 	bool dropped;
 
+	/* unregister procfs/sysfs entries in advance to avoid race case */
+	f2fs_unregister_sysfs(sbi);
+
 	f2fs_quota_off_umount(sb);
 
 	/* prevent remaining shrinker jobs */
@@ -1259,8 +1266,6 @@ static void f2fs_put_super(struct super_block *sb)
 	f2fs_destroy_post_read_wq(sbi);
 
 	kvfree(sbi->ckpt);
-
-	f2fs_unregister_sysfs(sbi);
 
 	sb->s_fs_info = NULL;
 	if (sbi->s_chksum_driver)
@@ -1644,7 +1649,7 @@ static void default_options(struct f2fs_sb_info *sbi)
 	F2FS_OPTION(sbi).inline_xattr_size = DEFAULT_INLINE_XATTR_ADDRS;
 	F2FS_OPTION(sbi).whint_mode = WHINT_MODE_OFF;
 	F2FS_OPTION(sbi).alloc_mode = ALLOC_MODE_DEFAULT;
-	F2FS_OPTION(sbi).fsync_mode = FSYNC_MODE_STRICT;
+	F2FS_OPTION(sbi).fsync_mode = FSYNC_MODE_POSIX;
 #ifdef CONFIG_FS_ENCRYPTION
 	F2FS_OPTION(sbi).inlinecrypt = false;
 #endif
@@ -1663,10 +1668,7 @@ static void default_options(struct f2fs_sb_info *sbi)
 	sbi->sb->s_flags |= MS_LAZYTIME;
 	clear_opt(sbi, DISABLE_CHECKPOINT);
 	F2FS_OPTION(sbi).unusable_cap = 0;
-	/* VENDOR_EDIT guoweichao@TECH.Storage.FS.oF2FS
-	 * 2019/08/15, no need to flush_merge as we have reduced most flushes
-	 */
-	//set_opt(sbi, FLUSH_MERGE);
+	set_opt(sbi, FLUSH_MERGE);
 	set_opt(sbi, DISCARD);
 	if (f2fs_sb_has_blkzoned(sbi))
 		F2FS_OPTION(sbi).fs_mode = FS_MODE_LFS;
@@ -1746,6 +1748,18 @@ restore_flag:
 
 static void f2fs_enable_checkpoint(struct f2fs_sb_info *sbi)
 {
+	int retry = DEFAULT_RETRY_IO_COUNT;
+
+	/* we should flush all the data to keep data consistency */
+	do {
+		sync_inodes_sb(sbi->sb);
+		cond_resched();
+		congestion_wait(BLK_RW_ASYNC, DEFAULT_IO_TIMEOUT);
+	} while (get_pages(sbi, F2FS_DIRTY_DATA) && retry--);
+
+	if (unlikely(retry < 0))
+		f2fs_warn(sbi, "checkpoint=enable has some unwritten data.");
+
 	down_write(&sbi->gc_lock);
 	f2fs_dirty_to_prefree(sbi);
 
@@ -3427,35 +3441,6 @@ static void f2fs_tuning_parameters(struct f2fs_sb_info *sbi)
 	sbi->readdir_ra = 1;
 }
 
-#ifdef CONFIG_F2FS_GRADING_SSR
-static int f2fs_init_grading_ssr(struct f2fs_sb_info *sbi)
-{
-	u32 total_blocks = sbi->raw_super->block_count>>18;
-	if (total_blocks > 64) { /* 64G */
-		sbi->hot_cold_params.hot_data_lower_limit = SSR_HD_SAPCE_LIMIT_128G;
-		sbi->hot_cold_params.hot_data_waterline = SSR_HD_WATERLINE_128G;
-		sbi->hot_cold_params.warm_data_lower_limit = SSR_WD_SAPCE_LIMIT_128G;
-		sbi->hot_cold_params.warm_data_waterline = SSR_WD_WATERLINE_128G;
-		sbi->hot_cold_params.hot_node_lower_limit = SSR_HD_SAPCE_LIMIT_128G;
-		sbi->hot_cold_params.hot_node_waterline = SSR_HN_WATERLINE_128G;
-		sbi->hot_cold_params.warm_node_lower_limit = SSR_WN_SAPCE_LIMIT_128G;
-		sbi->hot_cold_params.warm_node_waterline = SSR_WN_WATERLINE_128G;
-		sbi->hot_cold_params.enable = GRADING_SSR_ON;
-	} else {
-		sbi->hot_cold_params.hot_data_lower_limit = SSR_DEFALT_SPACE_LIMIT;
-		sbi->hot_cold_params.hot_data_waterline = SSR_DEFALT_WATERLINE;
-		sbi->hot_cold_params.warm_data_lower_limit = SSR_DEFALT_SPACE_LIMIT;
-		sbi->hot_cold_params.warm_data_waterline = SSR_DEFALT_WATERLINE;
-		sbi->hot_cold_params.hot_node_lower_limit = SSR_DEFALT_SPACE_LIMIT;
-		sbi->hot_cold_params.hot_node_waterline = SSR_DEFALT_WATERLINE;
-		sbi->hot_cold_params.warm_node_lower_limit = SSR_DEFALT_SPACE_LIMIT;
-		sbi->hot_cold_params.warm_node_waterline = SSR_DEFALT_WATERLINE;
-		sbi->hot_cold_params.enable = GRADING_SSR_ON;
-	}
-	return 0;
-}
-#endif
-
 static int f2fs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct f2fs_sb_info *sbi;
@@ -3837,7 +3822,6 @@ try_onemore:
 		}
 	}
 reset_checkpoint:
-	init_virtual_curseg(sbi);
 	/* f2fs_recover_fsync_data() cleared this already */
 	clear_sbi_flag(sbi, SBI_POR_DOING);
 
@@ -3859,7 +3843,6 @@ reset_checkpoint:
 		if (err)
 			goto sync_free_meta;
 	}
-
 	kvfree(options);
 
 	/* recover broken superblock */
@@ -3878,7 +3861,6 @@ reset_checkpoint:
 	f2fs_update_time(sbi, CP_TIME);
 	f2fs_update_time(sbi, REQ_TIME);
 	clear_sbi_flag(sbi, SBI_CP_DISABLED_QUICK);
-
 	return 0;
 
 sync_free_meta:
@@ -4110,7 +4092,6 @@ static void __exit exit_f2fs_fs(void)
 	unregister_filesystem(&f2fs_fs_type);
 	unregister_shrinker(&f2fs_shrinker_info);
 	f2fs_exit_sysfs();
-	destroy_garbage_collection_cache();
 	f2fs_destroy_extent_cache();
 	f2fs_destroy_checkpoint_caches();
 	f2fs_destroy_segment_manager_caches();
@@ -4125,4 +4106,5 @@ module_exit(exit_f2fs_fs)
 MODULE_AUTHOR("Samsung Electronics's Praesto Team");
 MODULE_DESCRIPTION("Flash Friendly File System");
 MODULE_LICENSE("GPL");
+MODULE_SOFTDEP("pre: crc32");
 

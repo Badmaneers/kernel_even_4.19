@@ -411,6 +411,7 @@ DEFINE_EVENT(sched_process_template, sched_process_free,
 	     TP_ARGS(p));
 
 
+
 /*
  * Tracepoint for a task exiting:
  */

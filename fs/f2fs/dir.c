@@ -1018,14 +1018,14 @@ int f2fs_fill_dentries(struct dir_context *ctx, struct f2fs_dentry_ptr *d,
 		bit_pos += GET_DENTRY_SLOTS(le16_to_cpu(de->name_len));
 		if (unlikely(bit_pos > d->max ||
 				le16_to_cpu(de->name_len) > F2FS_NAME_LEN)) {
-			f2fs_msg(F2FS_I_SB(d->inode)->sb, KERN_WARNING,
-				"%s: corrupted namelen=%d, run fsck to fix.",
-				__func__, le16_to_cpu(de->name_len));
-			set_sbi_flag(F2FS_I_SB(d->inode)->sb->s_fs_info, SBI_NEED_FSCK);
-			return -EINVAL;
+			f2fs_warn(sbi, "%s: corrupted namelen=%d, run fsck to fix.",
+				  __func__, le16_to_cpu(de->name_len));
+			set_sbi_flag(sbi, SBI_NEED_FSCK);
+			err = -EFSCORRUPTED;
+			goto out;
 		}
 
-		if (f2fs_encrypted_inode(d->inode)) {
+		if (IS_ENCRYPTED(d->inode)) {
 			int save_len = fstr->len;
 
 			err = fscrypt_fname_disk_to_usr(d->inode,
@@ -1084,15 +1084,11 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 		goto out_free;
 	}
 
-	if (readdir_ra == 1)
-		blk_start_plug(&plug);
 	for (; n < npages; n++, ctx->pos = n * NR_DENTRY_IN_BLOCK) {
 
 		/* allow readdir() to be interrupted */
 		if (fatal_signal_pending(current)) {
 			err = -ERESTARTSYS;
-			if (readdir_ra == 1)
-				blk_finish_plug(&plug);
 			goto out_free;
 		}
 		cond_resched();
@@ -1102,15 +1098,13 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 			page_cache_sync_readahead(inode->i_mapping, ra, file, n,
 				min(npages - n, (pgoff_t)MAX_DIR_RA_PAGES));
 
-		dentry_page = f2fs_get_lock_data_page(inode, n, false);
+		dentry_page = f2fs_find_data_page(inode, n);
 		if (IS_ERR(dentry_page)) {
 			err = PTR_ERR(dentry_page);
 			if (err == -ENOENT) {
 				err = 0;
 				continue;
 			} else {
-				if (readdir_ra == 1)
-					blk_finish_plug(&plug);
 				goto out_free;
 			}
 		}
@@ -1122,14 +1116,12 @@ static int f2fs_readdir(struct file *file, struct dir_context *ctx)
 		err = f2fs_fill_dentries(ctx, &d,
 				n * NR_DENTRY_IN_BLOCK, &fstr);
 		if (err) {
-			f2fs_put_page(dentry_page, 1);
+			f2fs_put_page(dentry_page, 0);
 			break;
 		}
 
-		f2fs_put_page(dentry_page, 1);
+		f2fs_put_page(dentry_page, 0);
 	}
-	if (readdir_ra == 1)
-		blk_finish_plug(&plug);
 out_free:
 	fscrypt_fname_free_buffer(&fstr);
 out:

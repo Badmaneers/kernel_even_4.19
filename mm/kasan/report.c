@@ -91,8 +91,7 @@ static void end_report(unsigned long *flags)
 	pr_err("==================================================================\n");
 	add_taint(TAINT_BAD_PAGE, LOCKDEP_NOW_UNRELIABLE);
 	spin_unlock_irqrestore(&report_lock, *flags);
-	if (panic_on_warn)
-		panic("panic_on_warn set ...\n");
+	check_panic_on_warn("KASAN");
 	kasan_enable_current();
 }
 
@@ -203,7 +202,7 @@ static inline bool init_task_stack_addr(const void *addr)
 			sizeof(init_thread_union.stack));
 }
 
-static void print_address_description(void *addr, u8 tag)
+static void print_address_description(void *addr)
 {
 	struct page *page = kasan_addr_to_page(addr);
 
@@ -292,19 +291,16 @@ static bool report_enabled(void)
 void kasan_report_invalid_free(void *object, unsigned long ip)
 {
 	unsigned long flags;
-	u8 tag = get_tag(object);
 
-	object = reset_tag(object);
 	start_report(&flags);
 	pr_err("BUG: KASAN: double-free or invalid-free in %pS\n", (void *)ip);
-	print_tags(tag, object);
+	print_tags(get_tag(object), reset_tag(object));
+	object = reset_tag(object);
 	pr_err("\n");
-	print_address_description(object, tag);
+	print_address_description(object);
 	pr_err("\n");
 	print_shadow_for_address(object);
 	end_report(&flags);
-	/* trigger KE to get the KAsan corruption message */
-	BUG();
 }
 
 void __kasan_report(unsigned long addr, size_t size, bool is_write, unsigned long ip)
@@ -339,7 +335,7 @@ void __kasan_report(unsigned long addr, size_t size, bool is_write, unsigned lon
 	pr_err("\n");
 
 	if (addr_has_shadow(untagged_addr)) {
-		print_address_description(untagged_addr, get_tag(tagged_addr));
+		print_address_description(untagged_addr);
 		pr_err("\n");
 		print_shadow_for_address(info.first_bad_addr);
 	} else {
@@ -347,6 +343,4 @@ void __kasan_report(unsigned long addr, size_t size, bool is_write, unsigned lon
 	}
 
 	end_report(&flags);
-	/* trigger KE to get the KAsan corruption message */
-	BUG();
 }

@@ -48,6 +48,20 @@ int arch_is_smp(void);
 #define arch_max_freq_scale topology_get_max_freq_scale
 #define arch_min_freq_scale topology_get_min_freq_scale
 
+#include <linux/arch_topology.h>
+
+/* Replace task scheduler's default frequency-invariant accounting */
+#define arch_scale_freq_capacity topology_get_freq_scale
+
+/* Replace task scheduler's default max-frequency-invariant accounting */
+#define arch_scale_max_freq_capacity topology_get_max_freq_scale
+
+/* Replace task scheduler's default cpu-invariant accounting */
+#define arch_scale_cpu_capacity topology_get_cpu_scale
+
+/* Enable topology flag updates */
+#define arch_update_cpu_topology topology_update_cpu_topology
+
 #else
 
 static inline void init_cpu_topology(void) { }

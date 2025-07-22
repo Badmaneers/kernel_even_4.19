@@ -194,14 +194,6 @@ static int gc_thread_func(void *data)
 	do {
 		bool sync_mode;
 
-		/* VENDOR_EDIT yanwu@TECH.Storage.FS.oF2FS
-		 * 2019/08/13, add code to optimize gc.
-		 * 2019/08/14, add need_SSR GC.
-		 * 2019/08/14, do FG GC in GC thread.
-		 */
-		if (of2fs_gc_wait(sbi, wq, &wait_ms))
-			continue;
-		/*
 		wait_event_interruptible_timeout(*wq,
 				kthread_should_stop() || freezing(current) ||
 				gc_th->gc_wake,
@@ -358,9 +350,6 @@ static int select_gc_type(struct f2fs_sb_info *sbi, int gc_type)
 	case GC_URGENT:
 		gc_mode = GC_GREEDY;
 		break;
-	case GC_IDLE_AT:
-		gc_mode = GC_AT;
-		break;
 	}
 	return gc_mode;
 }
@@ -393,8 +382,6 @@ static void select_policy(struct f2fs_sb_info *sbi, int gc_type,
 	 * foreground GC and urgent GC cases.
 	 */
 	if (gc_type != FG_GC &&
-			p->gc_mode != GC_AT &&
-			p->alloc_mode != ASSR &&
 			(sbi->gc_mode != GC_URGENT) &&
 			p->max_search > sbi->max_victim_search)
 		p->max_search = sbi->max_victim_search;
@@ -920,11 +907,6 @@ retry:
 		if (gc_type == BG_GC && test_bit(secno, dirty_i->victim_secmap))
 			goto next;
 
-		if (is_atgc) {
-			record_victim_entry(sbi, &p, segno);
-			goto next;
-		}
-
 		cost = get_gc_cost(sbi, segno, &p);
 
 		if (p.min_cost > cost) {
@@ -1045,9 +1027,6 @@ static int gc_node_segment(struct f2fs_sb_info *sbi,
 	int phase = 0;
 	bool fggc = (gc_type == FG_GC);
 	int submitted = 0;
-#ifdef CONFIG_F2FS_BD_STAT
-	int gc_blks = 0;
-#endif
 
 	start_addr = START_BLOCK(sbi, segno);
 
@@ -1075,7 +1054,6 @@ next_step:
 #else
 		if (gc_type == BG_GC && has_not_enough_free_secs(sbi, 0, 0))
 			return submitted;
-#endif
 
 		if (check_valid_map(sbi, segno, off) == 0)
 			continue;
@@ -1115,10 +1093,6 @@ next_step:
 		err = f2fs_move_node_page(node_page, gc_type);
 		if (!err && gc_type == FG_GC)
 			submitted++;
-#ifdef CONFIG_F2FS_BD_STAT
-		if (!err)
-			gc_blks++;
-#endif
 		stat_inc_node_blk_count(sbi, 1, gc_type);
 	}
 
@@ -1317,8 +1291,6 @@ static int move_data_block(struct inode *inode, block_t bidx,
 	block_t newaddr;
 	int err = 0;
 	bool lfs_mode = f2fs_lfs_mode(fio.sbi);
-	int type = fio.sbi && fio.sbi->atgc_enabled ?
-			CURSEG_FRAGMENT_DATA : CURSEG_COLD_DATA;
 
 	/* do not read out */
 	page = f2fs_grab_cache_page(inode->i_mapping, bidx, false);
@@ -1403,7 +1375,7 @@ static int move_data_block(struct inode *inode, block_t bidx,
 	}
 
 	f2fs_allocate_data_block(fio.sbi, NULL, fio.old_blkaddr, &newaddr,
-					&sum, type, NULL, false, SEQ_NONE);
+					&sum, CURSEG_COLD_DATA, NULL, false);
 
 	fio.encrypted_page = f2fs_pagecache_get_page(META_MAPPING(fio.sbi),
 				newaddr, FGP_LOCK | FGP_CREAT, GFP_NOFS);
@@ -1453,7 +1425,7 @@ put_page_out:
 recover_block:
 	if (err)
 		f2fs_do_replace_block(fio.sbi, &sum, newaddr, fio.old_blkaddr,
-								true, true, true);
+								true, true);
 up_out:
 	if (lfs_mode)
 		up_write(&fio.sbi->io_order_lock);
@@ -1559,9 +1531,6 @@ static int gc_data_segment(struct f2fs_sb_info *sbi, struct f2fs_summary *sum,
 	int off;
 	int phase = 0;
 	int submitted = 0;
-#ifdef CONFIG_F2FS_BD_STAT
-	int gc_blks = 0;
-#endif
 
 	start_addr = START_BLOCK(sbi, segno);
 
@@ -1613,7 +1582,8 @@ next_step:
 
 		if (phase == 3) {
 			inode = f2fs_iget(sb, dni.ino);
-			if (IS_ERR(inode) || is_bad_inode(inode)) {
+			if (IS_ERR(inode) || is_bad_inode(inode) ||
+					special_file(inode->i_mode)) {
 				set_sbi_flag(sbi, SBI_NEED_FSCK);
 				continue;
 			}
@@ -1704,13 +1674,6 @@ next_step:
 	if (++phase < 5)
 		goto next_step;
 
-#ifdef CONFIG_F2FS_BG_STAT
-	bd_lock(sbi);
-	bd_inc_array_val(sbi, gc_data_blocks, gc_type, gc_blks);
-	bd_inc_array_val(sbi, hotcold_count, HC_GC_COLD_DATA, gc_blks);
-	bd_unlock(sbi);
-#endif
-
 	return submitted;
 }
 
@@ -1722,7 +1685,7 @@ static int __get_victim(struct f2fs_sb_info *sbi, unsigned int *victim,
 
 	down_write(&sit_i->sentry_lock);
 	ret = DIRTY_I(sbi)->v_ops->get_victim(sbi, victim, gc_type,
-					      NO_CHECK_TYPE, LFS, 0);
+					      NO_CHECK_TYPE, LFS);
 	up_write(&sit_i->sentry_lock);
 	return ret;
 }
@@ -1740,9 +1703,6 @@ static int do_garbage_collect(struct f2fs_sb_info *sbi,
 	unsigned char type = IS_DATASEG(get_seg_entry(sbi, segno)->type) ?
 						SUM_TYPE_DATA : SUM_TYPE_NODE;
 	int submitted = 0;
-#ifdef CONFIG_F2FS_BD_STAT
-	int hc_type = get_seg_entry(sbi, segno)->type;
-#endif
 
 	if (__is_large_section(sbi))
 		end_segno = rounddown(end_segno, sbi->segs_per_sec);
@@ -1817,20 +1777,6 @@ freed:
 		if (gc_type == FG_GC &&
 				get_valid_blocks(sbi, segno, false) == 0)
 			seg_freed++;
-		migrated++;
-#ifdef CONFIG_F2FS_BD_STAT
-		bd_lock(sbi);
-		if (gc_type == BG_GC || get_valid_blocks(sbi, segno, 1) == 0) {
-			if (type == SUM_TYPE_NODE)
-				bd_inc_array_val(sbi, gc_node_segments, gc_type, 1);
-			else
-				bd_inc_array_val(sbi, gc_data_segments, gc_type, 1);
-			bd_inc_array_val(sbi, hotcold_gc_segments, hc_type + 1, 1);
-		}
-		bd_inc_array_val(sbi, hotcold_gc_blocks, hc_type + 1,
-					(unsigned long)get_valid_blocks(sbi, segno, 1));
-		bd_unlock(sbi);
-#endif
 
 		if (__is_large_section(sbi) && segno + 1 < end_segno)
 			sbi->next_victim_seg[gc_type] = segno + 1;
@@ -1864,11 +1810,6 @@ int f2fs_gc(struct f2fs_sb_info *sbi, bool sync,
 	unsigned long long last_skipped = sbi->skipped_atomic_files[FG_GC];
 	unsigned long long first_skipped;
 	unsigned int skipped_round = 0, round = 0;
-#ifdef CONFIG_F2FS_BD_STAT
-	bool gc_completed = false;
-	u64 fggc_begin, fggc_end;
-	fggc_begin = local_clock();
-#endif
 
 	trace_f2fs_gc_begin(sbi->sb, sync, background,
 				get_pages(sbi, F2FS_DIRTY_NODES),
@@ -1971,18 +1912,6 @@ stop:
 				prefree_segments(sbi));
 
 	up_write(&sbi->gc_lock);
-#ifdef CONFIG_F2FS_BD_STAT
-	if (gc_completed) {
-		fggc_end = gc_type == FG_GC ? local_clock() : 0;
-		bd_lock(sbi);
-		if (fggc_end)
-			bd_inc_val(sbi, fggc_time, fggc_end - fggc_begin);
-		bd_inc_array_val(sbi, gc_count, gc_type, 1);
-		if (ret)
-			bd_inc_array_val(sbi, gc_fail_count, gc_type, 1);
-		bd_unlock(sbi);
-	}
-#endif
 
 	put_gc_inode(&gc_list);
 
@@ -1991,30 +1920,11 @@ stop:
 	return ret;
 }
 
-int __init create_garbage_collection_cache(void)
-{
-	victim_entry_slab = f2fs_kmem_cache_create("victim_entry",
-					sizeof(struct victim_entry));
-	if (!victim_entry_slab)
-		return -ENOMEM;
-	return 0;
-}
-
-void destroy_garbage_collection_cache(void)
-{
-	kmem_cache_destroy(victim_entry_slab);
-}
-
 void f2fs_build_gc_manager(struct f2fs_sb_info *sbi)
 {
 	DIRTY_I(sbi)->v_ops = &default_v_ops;
 
 	sbi->gc_pin_file_threshold = DEF_GC_FAILED_PINNED_FILES;
-	/* VENDOR_EDIT yanwu@TECH.Storage.FS.oF2FS
-	 * 2019/08/14, add need_SSR GC.
-	 */
-	atomic_set(&sbi->need_ssr_gc, 0);
-	sbi->gc_opt_enable = true;
 
 	/* give warm/cold data area from slower device */
 	if (f2fs_is_multi_device(sbi) && !__is_large_section(sbi))
