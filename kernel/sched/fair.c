@@ -6223,11 +6223,16 @@ inline long
 schedtune_cpu_margin_with(unsigned long util, int cpu, struct task_struct *p)
 {
 	int boost = schedtune_cpu_boost_with(cpu, p);
+	long margin;
 
 	if (boost == 0)
-		return 0;
+		margin = 0;
+	else
+		margin = schedtune_margin(util, boost);
 
-	return schedtune_margin(util, boost);
+	trace_sched_boost_cpu(cpu, util, margin);
+
+	return margin;
 }
 
 long schedtune_task_margin(struct task_struct *task)
