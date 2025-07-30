@@ -546,7 +546,7 @@ end :
 	return 0;
 }
 
-int sia81xx_open_sock_server(void)
+int sia81xx_open_sock_server()
 {
 	int ret = 0;
 	struct sockaddr_in s_addr;

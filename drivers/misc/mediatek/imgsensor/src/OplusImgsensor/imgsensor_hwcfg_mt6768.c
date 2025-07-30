@@ -1183,7 +1183,7 @@ struct CAMERA_DEVICE_INFO gImgEepromInfo_limu_22263 = {
     .i4MTStereoAddr = {0xFFFF, 0xFFFF},
     .i4FrontStereoAddr = {0xFFFF, 0xFFFF},
 };
-void oplus_imgsensor_hwcfg(void)
+void oplus_imgsensor_hwcfg()
 {
     //zhaoyun 50M : 21331 21332 21337 21338
     //zhaoyun 13M : 21333 21334 21335 21336 21339

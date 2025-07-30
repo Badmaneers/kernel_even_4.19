@@ -79,7 +79,7 @@ static int oplus_activity_recognition_data_report(struct data_unit_t *input_even
 	return virtual_sensor_data_report(&event);
 }
 
-static int oplus_activity_recognition_flush_report(void)
+static int oplus_activity_recognition_flush_report()
 {
 	return virtual_sensor_flush_report(ID_OPLUS_ACTIVITY_RECOGNITION);
 }
